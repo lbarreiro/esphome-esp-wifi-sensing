@@ -1,5 +1,7 @@
 #include "wifi_sensing.h"
 
+#include <cstdlib>
+
 #include "esp_err.h"
 #include "esp_netif.h"
 
@@ -11,13 +13,13 @@ static const char *const TAG = "esp_wifi_sensing";
 
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
-  ESP_LOGI(TAG, "STEP 4 - Native CSI + router ping");
+  ESP_LOGI(TAG, "STEP 5 - CSI variation test");
 }
 
 
 void ESPWiFiSensing::loop() {
   // -------------------------------------------------------
-  // 1. Ativar CSI depois de o Wi-Fi estar ligado
+  // 1. CSI
   // -------------------------------------------------------
 
   if (!this->csi_started_) {
@@ -27,12 +29,11 @@ void ESPWiFiSensing::loop() {
     }
 
     this->csi_started_ = true;
-
-    ESP_LOGI(TAG, "STEP 4 - CSI enabled");
+    ESP_LOGI(TAG, "STEP 5 - CSI enabled");
   }
 
   // -------------------------------------------------------
-  // 2. Criar/iniciar ping ao gateway
+  // 2. Ping ao router
   // -------------------------------------------------------
 
   if (!this->ping_started_) {
@@ -42,17 +43,46 @@ void ESPWiFiSensing::loop() {
     }
 
     this->ping_started_ = true;
-
-    ESP_LOGI(TAG, "STEP 4 OK - Router ping started");
+    ESP_LOGI(TAG, "STEP 5 OK - Router ping started");
   }
 
   // -------------------------------------------------------
-  // 3. Mostrar contador CSI a cada 10 segundos
+  // 3. Processar nova métrica CSI
+  // -------------------------------------------------------
+
+  if (this->new_csi_sample_) {
+    const uint32_t metric = this->latest_csi_metric_;
+
+    this->new_csi_sample_ = false;
+
+    if (this->have_previous_sample_) {
+      uint32_t variation;
+
+      if (metric >= this->previous_csi_metric_) {
+        variation = metric - this->previous_csi_metric_;
+      } else {
+        variation = this->previous_csi_metric_ - metric;
+      }
+
+      this->variation_sum_ += variation;
+      this->variation_samples_++;
+
+      if (variation > this->variation_max_) {
+        this->variation_max_ = variation;
+      }
+    }
+
+    this->previous_csi_metric_ = metric;
+    this->have_previous_sample_ = true;
+  }
+
+  // -------------------------------------------------------
+  // 4. Relatório a cada 5 segundos
   // -------------------------------------------------------
 
   const uint32_t now = millis();
 
-  if (now - this->last_report_time_ < 10000) {
+  if (now - this->last_report_time_ < 5000) {
     return;
   }
 
@@ -66,12 +96,28 @@ void ESPWiFiSensing::loop() {
 
   this->last_reported_count_ = current;
 
+  uint32_t average_variation = 0;
+
+  if (this->variation_samples_ > 0) {
+    average_variation =
+        this->variation_sum_ /
+        this->variation_samples_;
+  }
+
   ESP_LOGI(
       TAG,
-      "CSI packets: total=%u, last 10s=%u",
-      static_cast<unsigned>(current),
-      static_cast<unsigned>(received)
+      "CSI: packets=%u/5s len=%u metric=%u variation avg=%u max=%u",
+      static_cast<unsigned>(received),
+      static_cast<unsigned>(this->latest_csi_len_),
+      static_cast<unsigned>(this->latest_csi_metric_),
+      static_cast<unsigned>(average_variation),
+      static_cast<unsigned>(this->variation_max_)
   );
+
+  // Começar uma nova janela estatística.
+  this->variation_sum_ = 0;
+  this->variation_max_ = 0;
+  this->variation_samples_ = 0;
 }
 
 
@@ -92,7 +138,6 @@ bool ESPWiFiSensing::start_csi_() {
       ap_info.primary
   );
 
-  // Registar callback CSI
   err =
       esp_wifi_set_csi_rx_cb(
           ESPWiFiSensing::csi_callback_,
@@ -109,7 +154,6 @@ bool ESPWiFiSensing::start_csi_() {
     return false;
   }
 
-  // ESP32-C6 / ESP-IDF 5.5.x
   wifi_csi_config_t config{};
 
   err =
@@ -145,7 +189,6 @@ bool ESPWiFiSensing::start_csi_() {
 
 
 bool ESPWiFiSensing::start_ping_() {
-  // Obter a interface STA criada pelo ESPHome.
   esp_netif_t *netif =
       esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
 
@@ -154,7 +197,6 @@ bool ESPWiFiSensing::start_ping_() {
     return false;
   }
 
-  // Obter IP/gateway atual.
   esp_netif_ip_info_t ip_info{};
 
   esp_err_t err =
@@ -184,13 +226,12 @@ bool ESPWiFiSensing::start_ping_() {
       IP2STR(&ip_info.gw)
   );
 
-  // Configuração base oficial do ESP-IDF.
   esp_ping_config_t ping_config =
       ESP_PING_DEFAULT_CONFIG();
 
-  // Gateway/router como destino.
   ip_addr_t target_addr{};
   target_addr.type = IPADDR_TYPE_V4;
+
   ip4_addr_set_u32(
       ip_2_ip4(&target_addr),
       ip_info.gw.addr
@@ -198,23 +239,13 @@ bool ESPWiFiSensing::start_ping_() {
 
   ping_config.target_addr = target_addr;
 
-  // Ping contínuo.
   ping_config.count = ESP_PING_COUNT_INFINITE;
 
-  // TESTE 4:
-  // 100 ms = 10 pings por segundo.
-  //
-  // Começamos conservador.
+  // Mantemos exatamente os 10 pings/s do Passo 4.
   ping_config.interval_ms = 100;
-
-  // Timeout inferior ao intervalo.
   ping_config.timeout_ms = 80;
-
-  // Payload suficiente para gerar tráfego útil,
-  // sem exagerarmos neste primeiro teste.
   ping_config.data_size = 32;
 
-  // Não precisamos de callbacks de ping.
   esp_ping_callbacks_t callbacks{};
 
   err =
@@ -269,10 +300,12 @@ void ESPWiFiSensing::csi_callback_(
     void *ctx,
     wifi_csi_info_t *data
 ) {
-  // Callback da Wi-Fi task:
-  // continuamos sem fazer processamento aqui.
-
-  if (ctx == nullptr || data == nullptr) {
+  if (
+      ctx == nullptr ||
+      data == nullptr ||
+      data->buf == nullptr ||
+      data->len == 0
+  ) {
     return;
   }
 
@@ -280,15 +313,42 @@ void ESPWiFiSensing::csi_callback_(
       static_cast<ESPWiFiSensing *>(ctx);
 
   self->csi_packet_count_++;
+
+  // -------------------------------------------------------
+  // Métrica extremamente simples para o primeiro teste.
+  //
+  // Somamos o valor absoluto de todos os bytes CSI.
+  //
+  // NÃO é ainda um algoritmo de presença.
+  // Queremos apenas descobrir se a métrica reage fisicamente
+  // quando alguém altera o caminho do sinal Wi-Fi.
+  // -------------------------------------------------------
+
+  uint32_t metric = 0;
+
+  const int8_t *buf =
+      reinterpret_cast<const int8_t *>(data->buf);
+
+  for (uint16_t i = 0; i < data->len; i++) {
+    int value = static_cast<int>(buf[i]);
+
+    metric += static_cast<uint32_t>(
+        value < 0 ? -value : value
+    );
+  }
+
+  self->latest_csi_metric_ = metric;
+  self->latest_csi_len_ = data->len;
+  self->new_csi_sample_ = true;
 }
 
 
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
-  ESP_LOGCONFIG(TAG, "  STEP 4 - Native CSI + router ping");
+  ESP_LOGCONFIG(TAG, "  STEP 5 - CSI variation");
   ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
-  ESP_LOGCONFIG(TAG, "  CSI processing: PACKET COUNTER ONLY");
+  ESP_LOGCONFIG(TAG, "  Metric: absolute CSI sum");
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
 
