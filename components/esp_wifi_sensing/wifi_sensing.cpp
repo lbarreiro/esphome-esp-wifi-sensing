@@ -12,21 +12,18 @@ static const char *const TAG = "esp_wifi_sensing";
 
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
-  ESP_LOGI(TAG, "TEST 3 - FSM create only");
+  ESP_LOGI(TAG, "TEST 3A - Default FSM config only");
 }
 
 
 void ESPWiFiSensing::loop() {
-  // TESTE 3:
+  // TESTE 3A:
   //
   // 1. Esperamos pelo Wi-Fi.
-  // 2. Obtemos o BSSID do router.
-  // 3. Criamos APENAS a FSM.
+  // 2. Obtemos o BSSID.
+  // 3. Criamos APENAS a estrutura de configuração default.
   //
-  // NÃO fazemos:
-  // - esp_wifi_sensing_fsm_add_channel()
-  // - esp_wifi_sensing_fsm_control(START)
-  // - esp_wifi_sensing_fsm_ping_router_start()
+  // NÃO chamamos esp_wifi_sensing_fsm_create().
 
   static bool test_attempted = false;
 
@@ -38,9 +35,11 @@ void ESPWiFiSensing::loop() {
     return;
   }
 
+  test_attempted = true;
+
   ESP_LOGI(
       TAG,
-      "TEST 3 - Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
+      "TEST 3A - Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
       this->peer_mac_[0],
       this->peer_mac_[1],
       this->peer_mac_[2],
@@ -49,42 +48,26 @@ void ESPWiFiSensing::loop() {
       this->peer_mac_[5]
   );
 
-  // Impede nova tentativa mesmo que a criação falhe.
-  test_attempted = true;
-
-  ESP_LOGI(TAG, "TEST 3 - Creating FSM...");
+  ESP_LOGI(TAG, "TEST 3A - Creating default FSM config...");
 
   esp_wifi_sensing_fsm_config_t config =
       DEFAULT_ESP_WIFI_SENSING_FSM_CONFIG();
 
-  esp_err_t err =
-      esp_wifi_sensing_fsm_create(
-          &config,
-          &this->fsm_
-      );
-
-  if (err != ESP_OK) {
-    ESP_LOGE(
-        TAG,
-        "TEST 3 FAILED - FSM create: %s",
-        esp_err_to_name(err)
-    );
-
-    this->fsm_ = nullptr;
-    return;
-  }
+  // Usamos a variável para evitar que o compilador simplesmente
+  // elimine a operação por não ser utilizada.
+  volatile size_t config_size = sizeof(config);
+  (void) config_size;
 
   ESP_LOGI(
       TAG,
-      "TEST 3 OK - FSM created successfully"
+      "TEST 3A OK - Default FSM config created (%u bytes)",
+      static_cast<unsigned>(sizeof(config))
   );
 
-  // IMPORTANTE:
-  // Paramamos aqui.
-  //
-  // Não adicionamos channel.
-  // Não arrancamos a FSM.
-  // Não iniciamos ping.
+  ESP_LOGI(
+      TAG,
+      "TEST 3A - esp_wifi_sensing_fsm_create() NOT CALLED"
+  );
 }
 
 
@@ -94,6 +77,11 @@ bool ESPWiFiSensing::get_router_bssid_() {
   esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
 
   if (err != ESP_OK) {
+    ESP_LOGW(
+        TAG,
+        "esp_wifi_sta_get_ap_info() failed: %s",
+        esp_err_to_name(err)
+    );
     return false;
   }
 
@@ -108,24 +96,21 @@ bool ESPWiFiSensing::get_router_bssid_() {
 
 
 bool ESPWiFiSensing::start_sensing_() {
-  // Não utilizado no TESTE 3.
+  // Não utilizado no TESTE 3A.
   return false;
 }
 
 
 void ESPWiFiSensing::stop_sensing_() {
-  // No TESTE 3 não fazemos cleanup automático.
-  //
-  // Queremos manter exatamente o estado resultante
-  // de esp_wifi_sensing_fsm_create() para observar
-  // se o dispositivo permanece estável.
+  // Nada para libertar no TESTE 3A.
 }
 
 
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
-  ESP_LOGCONFIG(TAG, "  Debug stage: TEST 3");
-  ESP_LOGCONFIG(TAG, "  Operation: FSM CREATE ONLY");
+  ESP_LOGCONFIG(TAG, "  Debug stage: TEST 3A");
+  ESP_LOGCONFIG(TAG, "  Default FSM config: ENABLED");
+  ESP_LOGCONFIG(TAG, "  fsm_create: DISABLED");
   ESP_LOGCONFIG(TAG, "  add_channel: DISABLED");
   ESP_LOGCONFIG(TAG, "  FSM START: DISABLED");
   ESP_LOGCONFIG(TAG, "  router ping: DISABLED");
