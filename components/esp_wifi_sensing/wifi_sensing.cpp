@@ -16,17 +16,30 @@ void ESPWiFiSensing::setup() {
 
 
 void ESPWiFiSensing::loop() {
-  // TESTE 1:
-  // Sensing deliberadamente desativado.
+  // TESTE 2:
+  // Esperamos até o Wi-Fi estar ligado e conseguirmos obter
+  // o BSSID real do router/AP.
   //
-  // O objetivo é confirmar que:
-  // - o componente ESPHome é criado corretamente;
-  // - setup() funciona;
-  // - o dispositivo continua ligado ao Wi-Fi/API;
-  // - não ocorre crash/rollback.
-  //
-  // Não chamamos get_router_bssid_()
-  // nem start_sensing_().
+  // Neste teste NÃO iniciamos a FSM da Espressif.
+
+  if (!this->sensing_started_) {
+    if (this->get_router_bssid_()) {
+      ESP_LOGI(
+          TAG,
+          "TEST 2 OK - Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
+          this->peer_mac_[0],
+          this->peer_mac_[1],
+          this->peer_mac_[2],
+          this->peer_mac_[3],
+          this->peer_mac_[4],
+          this->peer_mac_[5]
+      );
+
+      // Usamos esta flag apenas para executar este teste uma vez.
+      // A FSM NÃO é iniciada.
+      this->sensing_started_ = true;
+    }
+  }
 }
 
 
@@ -187,4 +200,4 @@ void ESPWiFiSensing::dump_config() {
 }
 
 }  // namespace esp_wifi_sensing
-}  // namespace esphome
+}  // namespace esphome}  // namespace esphome
