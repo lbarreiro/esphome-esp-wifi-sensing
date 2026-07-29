@@ -26,7 +26,22 @@ class ESPWiFiSensing : public Component {
   bool start_csi_();
   bool start_ping_();
 
+  // CSI
   volatile uint32_t csi_packet_count_{0};
+
+  // Métrica calculada a partir do buffer CSI.
+  volatile uint32_t latest_csi_metric_{0};
+  volatile uint16_t latest_csi_len_{0};
+  volatile bool new_csi_sample_{false};
+
+  // Comparação entre amostras.
+  uint32_t previous_csi_metric_{0};
+  bool have_previous_sample_{false};
+
+  // Estatísticas para o relatório.
+  uint32_t variation_sum_{0};
+  uint32_t variation_max_{0};
+  uint32_t variation_samples_{0};
 
   uint32_t last_reported_count_{0};
   uint32_t last_report_time_{0};
