@@ -10,15 +10,12 @@ static const char *const TAG = "esp_wifi_sensing";
 
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
-  ESP_LOGI(TAG, "STEP 3 - Native ESP-IDF CSI test");
+  ESP_LOGI(TAG, "STEP 3 - Native ESP32-C6 CSI test");
 }
 
 
 void ESPWiFiSensing::loop() {
-  // ESPHome pode chamar setup() antes de o Wi-Fi estar
-  // completamente pronto. Tentamos iniciar CSI apenas
-  // quando a interface Wi-Fi já estiver operacional.
-
+  // Esperar até o ESPHome ter estabelecido a ligação Wi-Fi.
   if (!this->csi_started_) {
     if (!this->start_csi_()) {
       delay(1000);
@@ -32,16 +29,13 @@ void ESPWiFiSensing::loop() {
 
   const uint32_t now = millis();
 
-  // Relatório a cada 10 segundos.
   if (now - this->last_report_time_ < 10000) {
     return;
   }
 
   this->last_report_time_ = now;
 
-  const uint32_t current =
-      this->csi_packet_count_;
-
+  const uint32_t current = this->csi_packet_count_;
   const uint32_t received =
       current - this->last_reported_count_;
 
@@ -57,8 +51,6 @@ void ESPWiFiSensing::loop() {
 
 
 bool ESPWiFiSensing::start_csi_() {
-  // Primeiro confirmamos que o ESP está realmente
-  // associado ao Access Point.
   wifi_ap_record_t ap_info{};
 
   esp_err_t err =
@@ -88,23 +80,15 @@ bool ESPWiFiSensing::start_csi_() {
         "esp_wifi_set_csi_rx_cb failed: %s",
         esp_err_to_name(err)
     );
-
     return false;
   }
 
-  // Configuração CSI.
+  // ESP32-C6 / ESP-IDF 5.5.x:
+  // wifi_csi_config_t é wifi_csi_acquire_config_t.
   //
-  // Inicialização a zero primeiro para não deixarmos
-  // campos indefinidos.
+  // Neste primeiro teste não alteramos campos internos.
+  // Apenas inicializamos a estrutura de forma segura.
   wifi_csi_config_t config{};
-
-  config.lltf_en = true;
-  config.htltf_en = true;
-  config.stbc_htltf2_en = true;
-  config.ltf_merge_en = true;
-  config.channel_filter_en = false;
-  config.manu_scale = false;
-  config.shift = 0;
 
   err =
       esp_wifi_set_csi_config(&config);
@@ -115,11 +99,9 @@ bool ESPWiFiSensing::start_csi_() {
         "esp_wifi_set_csi_config failed: %s",
         esp_err_to_name(err)
     );
-
     return false;
   }
 
-  // Ativar receção CSI.
   err =
       esp_wifi_set_csi(true);
 
@@ -129,9 +111,10 @@ bool ESPWiFiSensing::start_csi_() {
         "esp_wifi_set_csi(true) failed: %s",
         esp_err_to_name(err)
     );
-
     return false;
   }
+
+  ESP_LOGI(TAG, "Native CSI receiver started");
 
   return true;
 }
@@ -141,11 +124,12 @@ void ESPWiFiSensing::csi_callback_(
     void *ctx,
     wifi_csi_info_t *data
 ) {
-  // IMPORTANTE:
-  // Este callback corre dentro da task Wi-Fi.
-  // Nada de logs, processamento CSI ou Home Assistant aqui.
+  // Este callback corre na Wi-Fi task.
+  // Não fazemos processamento aqui.
+  // Apenas contamos pacotes.
   //
-  // Por enquanto contamos APENAS os pacotes.
+  // A Espressif recomenda precisamente evitar operações
+  // demoradas dentro deste callback.
 
   if (ctx == nullptr || data == nullptr) {
     return;
@@ -160,7 +144,7 @@ void ESPWiFiSensing::csi_callback_(
 
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
-  ESP_LOGCONFIG(TAG, "  STEP 3 - Native CSI");
+  ESP_LOGCONFIG(TAG, "  STEP 3 - Native ESP32-C6 CSI");
   ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
   ESP_LOGCONFIG(TAG, "  CSI processing: PACKET COUNTER ONLY");
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
