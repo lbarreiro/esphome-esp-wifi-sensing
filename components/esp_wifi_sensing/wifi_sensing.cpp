@@ -12,34 +12,52 @@ static const char *const TAG = "esp_wifi_sensing";
 
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
+  ESP_LOGI(TAG, "TEST 2 - waiting for Wi-Fi/router BSSID...");
 }
 
 
 void ESPWiFiSensing::loop() {
   // TESTE 2:
-  // Esperamos até o Wi-Fi estar ligado e conseguirmos obter
-  // o BSSID real do router/AP.
-  //
-  // Neste teste NÃO iniciamos a FSM da Espressif.
+  // Apenas tentamos obter o BSSID do AP/router.
+  // NÃO criamos FSM.
+  // NÃO iniciamos sensing.
+  // NÃO alteramos sensing_started_.
 
-  if (!this->sensing_started_) {
-    if (this->get_router_bssid_()) {
-      ESP_LOGI(
-          TAG,
-          "TEST 2 OK - Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
-          this->peer_mac_[0],
-          this->peer_mac_[1],
-          this->peer_mac_[2],
-          this->peer_mac_[3],
-          this->peer_mac_[4],
-          this->peer_mac_[5]
-      );
+  static uint32_t last_attempt = 0;
+  static bool test_completed = false;
 
-      // Usamos esta flag apenas para executar este teste uma vez.
-      // A FSM NÃO é iniciada.
-      this->sensing_started_ = true;
-    }
+  if (test_completed) {
+    return;
   }
+
+  // Tentar apenas a cada 5 segundos para não inundar o log.
+  const uint32_t now = millis();
+
+  if (now - last_attempt < 5000) {
+    return;
+  }
+
+  last_attempt = now;
+
+  ESP_LOGI(TAG, "TEST 2 - requesting router BSSID...");
+
+  if (!this->get_router_bssid_()) {
+    ESP_LOGW(TAG, "TEST 2 - router BSSID not available yet");
+    return;
+  }
+
+  ESP_LOGI(
+      TAG,
+      "TEST 2 OK - Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
+      this->peer_mac_[0],
+      this->peer_mac_[1],
+      this->peer_mac_[2],
+      this->peer_mac_[3],
+      this->peer_mac_[4],
+      this->peer_mac_[5]
+  );
+
+  test_completed = true;
 }
 
 
@@ -49,6 +67,11 @@ bool ESPWiFiSensing::get_router_bssid_() {
   esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
 
   if (err != ESP_OK) {
+    ESP_LOGW(
+        TAG,
+        "esp_wifi_sta_get_ap_info() failed: %s",
+        esp_err_to_name(err)
+    );
     return false;
   }
 
@@ -70,7 +93,6 @@ bool ESPWiFiSensing::start_sensing_() {
       this->peer_mac_[5]
   );
 
-  // Configuração oficial por defeito da Espressif.
   esp_wifi_sensing_fsm_config_t config =
       DEFAULT_ESP_WIFI_SENSING_FSM_CONFIG();
 
@@ -125,8 +147,6 @@ bool ESPWiFiSensing::start_sensing_() {
     return false;
   }
 
-  // No modo router, a própria biblioteca mantém tráfego
-  // de ping para o gateway para produzir amostras CSI.
   err =
       esp_wifi_sensing_fsm_ping_router_start(
           this->fsm_
@@ -179,25 +199,9 @@ void ESPWiFiSensing::stop_sensing_() {
 
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
-  ESP_LOGCONFIG(
-      TAG,
-      "  Status: %s",
-      this->sensing_started_ ? "RUNNING" : "WAITING"
-  );
-
-  if (this->sensing_started_) {
-    ESP_LOGCONFIG(
-        TAG,
-        "  Router BSSID: %02X:%02X:%02X:%02X:%02X:%02X",
-        this->peer_mac_[0],
-        this->peer_mac_[1],
-        this->peer_mac_[2],
-        this->peer_mac_[3],
-        this->peer_mac_[4],
-        this->peer_mac_[5]
-    );
-  }
+  ESP_LOGCONFIG(TAG, "  Debug stage: TEST 2 - BSSID only");
+  ESP_LOGCONFIG(TAG, "  FSM: NOT STARTED");
 }
 
 }  // namespace esp_wifi_sensing
-}  // namespace esphome}  // namespace esphome
+}  // namespace esphome}  // namespace esphome}  // namespace esphome
