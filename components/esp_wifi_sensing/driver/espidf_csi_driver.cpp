@@ -1,4 +1,4 @@
-#include "espidf_csi_driver.h"
+#include "esp_wifi_sensing/driver/espidf_csi_driver.h"
 
 #include "esp_err.h"
 #include "esphome/core/log.h"
