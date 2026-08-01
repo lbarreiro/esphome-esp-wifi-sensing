@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "esp_wifi_sensing/models/csi_packet.h"
+#include "models/csi_packet.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
