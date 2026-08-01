@@ -1,4 +1,4 @@
-#include "pipeline/csi_pipeline.h"
+#include "csi_pipeline.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {

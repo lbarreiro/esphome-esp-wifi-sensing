@@ -8,10 +8,10 @@
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
 
-#include "driver/espidf_csi_driver.h"
-#include "pipeline/csi_pipeline.h"
-#include "models/csi_packet.h"
-#include "algorithms/threshold_algorithm.h"
+#include "espidf_csi_driver.h"
+#include "csi_pipeline.h"
+#include "csi_packet.h"
+#include "threshold_algorithm.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
