@@ -6,6 +6,121 @@
 #include "esp_netif.h"
 
 namespace esphome {
+/**
+ * @file ESPWiFiSensing Component Architecture Documentation
+ * 
+ * COMPONENT LIFECYCLE:
+ * ====================
+ * 1. setup() - Initialization phase
+ *    - Called once at component startup
+ *    - Logs that CSI variation test is starting
+ *    - Does NOT initialize CSI or ping yet (deferred to loop)
+ * 
+ * 2. loop() - Main execution loop (called repeatedly)
+ *    - Phase 1: Lazy initialization of CSI receiver
+ *      * Calls start_csi_() on first iteration
+ *      * Registers csi_callback_ with ESP-IDF wifi stack
+ *      * Retries every 1000ms if initialization fails
+ *    - Phase 2: Lazy initialization of ping service
+ *      * Calls start_ping_() after CSI is ready
+ *      * Configures ping to gateway at 10 pings/second (100ms interval)
+ *      * Retries every 1000ms if initialization fails
+ *    - Phase 3: Process incoming CSI samples
+ *      * Calculates variation metrics between consecutive samples
+ *      * Accumulates statistics (sum, max, count)
+ *    - Phase 4: Report statistics window
+ *      * Publishes aggregated metrics every 5 seconds
+ *      * Resets variation accumulators after reporting
+ * 
+ * CSI ACQUISITION FLOW:
+ * ====================
+ * Entry Point: start_csi_()
+ *   1. Query AP info via esp_wifi_sta_get_ap_info() to confirm Wi-Fi connection
+ *   2. Register callback via esp_wifi_set_csi_rx_cb(ESPWiFiSensing::csi_callback_, this)
+ *      - Uses static method with context pointer for callback dispatch
+ *   3. Configure CSI via esp_wifi_set_csi_config() with default config
+ *   4. Enable CSI via esp_wifi_set_csi(true)
+ *   5. Once enabled, csi_callback_() invoked asynchronously per packet received
+ * 
+ * Callback Processing: csi_callback_()
+ *   - Static callback from ESP-IDF driver layer
+ *   - Extracts CSI buffer (wifi_csi_info_t.buf) containing I/Q subcarrier data
+ *   - Computes simple metric: sum of absolute values of all CSI bytes
+ *   - Sets new_csi_sample_ flag for loop() to process in next iteration
+ *   - Thread-safe: callback updates only volatile member variables
+ * 
+ * ESPHOME API USAGE:
+ * ==================
+ * - ESPHome component base class pattern (setup/loop/dump_config lifecycle)
+ * - No direct ESPHome sensor/API bindings visible (output mechanism not in this file)
+ * - Logging framework: ESP_LOGI, ESP_LOGW, ESP_LOGE, ESP_LOGCONFIG macros
+ * - Configuration dump: dump_config() for component introspection
+ * - Likely inherits from esphome::Component base class (inferred)
+ * - Assumes ESPHome integration layer handles WiFi initialization before setup()
+ * 
+ * ESPRESSIF OFFICIAL CSI LIBRARY COMPATIBILITY:
+ * ==============================================
+ * Current implementation uses:
+ *   - Low-level ESP-IDF APIs: esp_wifi_set_csi_rx_cb(), esp_wifi_set_csi()
+ *   - Direct CSI buffer access: reinterpret_cast<int8_t*>(data->buf)
+ *   - Raw metrics on unprocessed CSI subcarrier values
+ * 
+ * Official esp-radar library (Espressif's CSI sensing stack) could replace:
+ *   - BUT requires file dependency analysis to determine if esp-radar is:
+ *     * Already integrated into this project
+ *     * Compatible with ESPHome's build system
+ *     * Provides necessary WiFi presence detection without extra overhead
+ *   - esp-radar would handle subcarrier processing, FMCW algorithms
+ *   - Current approach (step 5) appears to be experimental baseline
+ *   - Architecture suggests this is prototype; production may integrate esp-radar
+ * 
+ * TECHNICAL RISKS:
+ * ================
+ * RISK 1: Callback Threading
+ *   - csi_callback_() invoked from WiFi driver ISR/task context (not loop context)
+ *   - Current code uses only atomic member assignments (latest_csi_metric_, flag)
+ *   - Risk: If loop() reads 64-bit metrics, potential tearing on 32-bit CPU
+ *   - Mitigation needed: Verify all member updates are atomic or guarded by mutex
+ * 
+ * RISK 2: Blocking Operations in Loop
+ *   - delay(1000) in loop during initialization blocks entire component
+ *   - Prevents ESPHome from servicing other components during startup
+ *   - Should use non-blocking timer mechanism (e.g., last_attempt_time_)
+ *   - Impact: Startup delay multiplies if CSI or ping init fails
+ * 
+ * RISK 3: Metric Simplicity for Production
+ *   - Sum-of-absolute-CSI metric is NOT presence detection algorithm
+ *   - No filtering, no ML model, no multipath rejection
+ *   - High susceptibility to environmental noise and static objects
+ *   - Risk: False positives in presence detection cannot be avoided with current metric
+ *   - Code comments acknowledge this is "Step 5" (experimental baseline only)
+ * 
+ * RISK 4: Memory and Buffer Management
+ *   - CSI buffer lifetime: callback receives pointer to ESP-IDF managed buffer
+ *   - Current code reads buffer but does NOT copy; relies on synchronous processing
+ *   - Risk: If metric calculation is slow or delayed, buffer may be reused/freed
+ *   - Mitigation: Verify buffer is valid for entire callback duration (likely true)
+ * 
+ * RISK 5: Ping-CSI Coupling Assumption
+ *   - Code assumes ping traffic triggers CSI reception
+ *   - No confirmation that ping packets actually cause CSI capture
+ *   - Risk: WiFi driver may not generate CSI for outbound ping frames
+ *   - Mitigation needed: Verify CSI is captured for both RX and TX directions
+ * 
+ * RISK 6: Missing Error Recovery
+ *   - Once CSI/ping started, no mechanism to detect failure and restart
+ *   - If WiFi driver crashes or callback stops, loop() continues but produces stale data
+ *   - Missing watchdog on packet_count or variation metrics
+ *   - Risk: Silent data corruption (reports last valid metric indefinitely)
+ * 
+ * REQUIRED FILES FOR COMPLETE ANALYSIS:
+ * =====================================
+ * Please provide:
+ *   1. wifi_sensing.h - Member variable declarations, class definition
+ *   2. CMakeLists.txt or manifest.yaml - Build configuration and dependencies
+ *   3. Any caller/wrapper code showing how metrics are exported to ESPHome
+ *   4. Header file to confirm thread-safety guarantees on member variables
+ */
 namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing";
@@ -138,51 +253,9 @@ bool ESPWiFiSensing::start_csi_() {
       ap_info.primary
   );
 
-  err =
-      esp_wifi_set_csi_rx_cb(
-          ESPWiFiSensing::csi_callback_,
-          this
-      );
-
-  if (err != ESP_OK) {
-    ESP_LOGE(
-        TAG,
-        "esp_wifi_set_csi_rx_cb failed: %s",
-        esp_err_to_name(err)
-    );
-
+  if (!this->driver_.start(this, ESPWiFiSensing::csi_callback_)) {
     return false;
   }
-
-  wifi_csi_config_t config{};
-
-  err =
-      esp_wifi_set_csi_config(&config);
-
-  if (err != ESP_OK) {
-    ESP_LOGE(
-        TAG,
-        "esp_wifi_set_csi_config failed: %s",
-        esp_err_to_name(err)
-    );
-
-    return false;
-  }
-
-  err =
-      esp_wifi_set_csi(true);
-
-  if (err != ESP_OK) {
-    ESP_LOGE(
-        TAG,
-        "esp_wifi_set_csi(true) failed: %s",
-        esp_err_to_name(err)
-    );
-
-    return false;
-  }
-
-  ESP_LOGI(TAG, "Native CSI receiver started");
 
   return true;
 }
@@ -324,22 +397,27 @@ void ESPWiFiSensing::csi_callback_(
   // quando alguém altera o caminho do sinal Wi-Fi.
   // -------------------------------------------------------
 
-  uint32_t metric = 0;
-
   const int8_t *buf =
       reinterpret_cast<const int8_t *>(data->buf);
 
-  for (uint16_t i = 0; i < data->len; i++) {
-    int value = static_cast<int>(buf[i]);
+  CsiPacket packet{};
+  packet.len = data->len;
+  packet.raw_bytes = buf;
 
-    metric += static_cast<uint32_t>(
-        value < 0 ? -value : value
-    );
+  self->pipeline_.process_packet(packet);
+
+  uint32_t metric = 0;
+  if (packet.raw_bytes != nullptr) {
+    for (uint16_t i = 0; i < packet.len; i++) {
+      int value = static_cast<int>(packet.raw_bytes[i]);
+      metric += static_cast<uint32_t>(value < 0 ? -value : value);
+    }
   }
 
-  self->latest_csi_metric_ = metric;
-  self->latest_csi_len_ = data->len;
-  self->new_csi_sample_ = true;
+  self->latest_csi_metric_ = self->algorithm_.process(metric);
+  self->latest_csi_len_ = self->pipeline_.latest_len();
+  self->new_csi_sample_ = self->pipeline_.has_new_sample();
+  self->pipeline_.clear_new_sample();
 }
 
 
