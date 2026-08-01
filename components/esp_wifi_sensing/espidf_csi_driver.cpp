@@ -8,7 +8,7 @@ namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing::driver";
 
-bool EspIdfCsiDriver::start(void *ctx, wifi_csi_rx_cb_t callback) {
+bool EspIdfCsiDriver::start(void *ctx, wifi_csi_cb_t callback) {
   if (this->started_) {
     return true;
   }
