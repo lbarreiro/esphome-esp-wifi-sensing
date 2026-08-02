@@ -126,6 +126,12 @@ namespace esp_wifi_sensing {
 static const char *const TAG = "esp_wifi_sensing";
 
 
+void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
+  this->gain_compensation_enabled_ = enabled;
+  this->pipeline_.set_gain_compensation_enabled(enabled);
+}
+
+
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
