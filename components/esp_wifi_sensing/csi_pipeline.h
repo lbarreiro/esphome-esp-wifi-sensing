@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "csi_packet.h"
+#include "gain_compensation_preprocessor.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -17,6 +18,7 @@ class CsiPipeline {
   void clear_new_sample() { has_new_sample_ = false; }
 
  private:
+  GainCompensationPreprocessor gain_compensation_preprocessor_{};
   uint16_t latest_len_{0};
   bool has_new_sample_{false};
 };
