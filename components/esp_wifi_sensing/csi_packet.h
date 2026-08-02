@@ -11,6 +11,7 @@ struct CsiPacket {
   uint16_t len{0};
   const int8_t *raw_bytes{nullptr};
   const wifi_pkt_rx_ctrl_t *rx_ctrl{nullptr};
+  bool gain_compensated{false};
 };
 
 }  // namespace esp_wifi_sensing
