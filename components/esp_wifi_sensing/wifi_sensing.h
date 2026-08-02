@@ -21,6 +21,7 @@ class ESPWiFiSensing : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
+  void set_gain_compensation_enabled(bool enabled) { gain_compensation_enabled_ = enabled; }
 
  protected:
   static void csi_callback_(
@@ -53,6 +54,7 @@ class ESPWiFiSensing : public Component {
 
   bool csi_started_{false};
   bool ping_started_{false};
+  bool gain_compensation_enabled_{false};
 
   esp_ping_handle_t ping_handle_{nullptr};
 

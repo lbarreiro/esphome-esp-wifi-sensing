@@ -9,6 +9,7 @@ void CsiPipeline::process_packet(const CsiPacket &packet) {
   CsiPacket processed_packet{};
   gain_compensation_preprocessor_.process(packet, processed_packet);
 
+  latest_packet_ = processed_packet;
   latest_len_ = processed_packet.len;
   has_new_sample_ = true;
 }
