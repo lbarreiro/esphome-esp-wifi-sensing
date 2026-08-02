@@ -1,0 +1,25 @@
+esphome:
+  name: esp-wifi-sensing-enabled
+  friendly_name: ESP WiFi Sensing Enabled
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: "wifi-sensing-test"
+  password: "wifi-sensing-test"
+  ap:
+    ssid: "WiFi Sensing Enabled Fallback"
+    password: "wifi-sensing-test"
+
+external_components:
+  - source:
+      type: local
+      path: ..
+
+esp_wifi_sensing:
+  gain_compensation: true

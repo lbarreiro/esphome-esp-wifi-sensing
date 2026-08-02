@@ -129,6 +129,7 @@ static const char *const TAG = "esp_wifi_sensing";
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
+  this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
 }
 
 
@@ -403,13 +404,16 @@ void ESPWiFiSensing::csi_callback_(
   CsiPacket packet{};
   packet.len = data->len;
   packet.raw_bytes = buf;
+  packet.rx_ctrl = &data->rx_ctrl;
 
   self->pipeline_.process_packet(packet);
 
+  const CsiPacket &processed_packet = self->pipeline_.latest_packet();
+
   uint32_t metric = 0;
-  if (packet.raw_bytes != nullptr) {
-    for (uint16_t i = 0; i < packet.len; i++) {
-      int value = static_cast<int>(packet.raw_bytes[i]);
+  if (processed_packet.raw_bytes != nullptr) {
+    for (uint16_t i = 0; i < processed_packet.len; i++) {
+      int value = static_cast<int>(processed_packet.raw_bytes[i]);
       metric += static_cast<uint32_t>(value < 0 ? -value : value);
     }
   }
@@ -427,6 +431,7 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
   ESP_LOGCONFIG(TAG, "  Metric: absolute CSI sum");
+  ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
 
