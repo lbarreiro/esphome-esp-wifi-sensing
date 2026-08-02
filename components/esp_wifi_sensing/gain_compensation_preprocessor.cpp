@@ -3,11 +3,8 @@
 #include "esp_err.h"
 #include "esphome/core/log.h"
 
-#if __has_include("esp_csi_gain_ctrl.h")
+#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
 #include "esp_csi_gain_ctrl.h"
-#define ESP_WIFI_SENSING_HAS_GAIN_CTRL 1
-#else
-#define ESP_WIFI_SENSING_HAS_GAIN_CTRL 0
 #endif
 
 namespace esphome {
@@ -25,7 +22,7 @@ void GainCompensationPreprocessor::process(
     return;
   }
 
-#if ESP_WIFI_SENSING_HAS_GAIN_CTRL
+#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
   if (input.rx_ctrl == nullptr) {
     ESP_LOGW(TAG, "Gain compensation enabled but CSI RX control metadata is unavailable");
     return;
@@ -60,12 +57,6 @@ void GainCompensationPreprocessor::process(
   }
 
   output.raw_bytes = this->compensated_bytes_.data();
-#else
-  static bool logged_unavailable = false;
-  if (!logged_unavailable) {
-    ESP_LOGW(TAG, "Gain compensation enabled but esp_csi_gain_ctrl is not available in this build");
-    logged_unavailable = true;
-  }
 #endif
 }
 
