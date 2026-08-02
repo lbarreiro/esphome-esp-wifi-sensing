@@ -405,7 +405,10 @@ void ESPWiFiSensing::maybe_dump_csi_debug_(
   esp_csi_gain_ctrl_get_rx_gain(&data->rx_ctrl, &agc_gain, &fft_gain);
 #endif
 
-  std::printf(
+  char line[1600];
+  int offset = std::snprintf(
+      line,
+      sizeof(line),
       "%u,%u,%d,%u",
       static_cast<unsigned>(millis()),
       static_cast<unsigned>(agc_gain),
@@ -413,12 +416,17 @@ void ESPWiFiSensing::maybe_dump_csi_debug_(
       static_cast<unsigned>(data->len)
   );
 
-  for (uint16_t i = 0; i < 256; i++) {
+  for (uint16_t i = 0; i < 256 && offset > 0 && offset < static_cast<int>(sizeof(line)); i++) {
     const int value = i < data->len ? static_cast<int>(buf[i]) : 0;
-    std::printf(",%d", value);
+    offset += std::snprintf(
+        line + offset,
+        sizeof(line) - static_cast<size_t>(offset),
+        ",%d",
+        value
+    );
   }
 
-  std::printf("\n");
+  ESP_LOGI(TAG, "%s", line);
 
   this->debug_dump_csi_count_++;
   if (this->debug_dump_csi_count_ >= 500) {
