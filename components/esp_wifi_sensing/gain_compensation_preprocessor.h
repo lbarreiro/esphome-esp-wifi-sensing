@@ -10,7 +10,7 @@ namespace esp_wifi_sensing {
 
 class GainCompensationPreprocessor {
  public:
-  void set_enabled(bool enabled) { enabled_ = enabled; }
+  void set_enabled(bool enabled);
   bool is_enabled() const { return enabled_; }
 
   void process(const CsiPacket &input, CsiPacket &output);
