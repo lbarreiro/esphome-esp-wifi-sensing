@@ -12,21 +12,6 @@ namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing::gain_compensation";
 
-#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
-const char *gain_status_to_string(rx_gain_status_t status) {
-  switch (status) {
-    case RX_GAIN_COLLECT:
-      return "RX_GAIN_COLLECT";
-    case RX_GAIN_READY:
-      return "RX_GAIN_READY";
-    case RX_GAIN_FORCE:
-      return "RX_GAIN_FORCE";
-    default:
-      return "RX_GAIN_UNKNOWN";
-  }
-}
-#endif
-
 void GainCompensationPreprocessor::set_enabled(bool enabled) {
   if (this->enabled_ == enabled) {
     return;
@@ -34,15 +19,10 @@ void GainCompensationPreprocessor::set_enabled(bool enabled) {
 
   this->enabled_ = enabled;
   this->compensated_bytes_.clear();
-  this->last_gain_status_ = -1;
-  this->baseline_sample_count_ = 0;
-  this->compensated_packet_count_ = 0;
-  this->compensation_log_countdown_ = 0;
 
 #ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
   if (enabled) {
     esp_csi_gain_ctrl_reset_rx_gain_baseline();
-    ESP_LOGI(TAG, "Gain compensation enabled; collecting RX gain baseline");
   }
 #endif
 }
@@ -68,76 +48,20 @@ void GainCompensationPreprocessor::process(
   esp_csi_gain_ctrl_get_rx_gain(input.rx_ctrl, &agc_gain, &fft_gain);
 
   rx_gain_status_t status = esp_csi_gain_ctrl_get_gain_status();
-  const char *status_name = gain_status_to_string(status);
-  if (static_cast<int>(status) != this->last_gain_status_) {
-    this->last_gain_status_ = static_cast<int>(status);
-    ESP_LOGI(
-        TAG,
-        "RX gain transition to %s baseline_samples=%u compensated_packets=%u",
-        status_name,
-        static_cast<unsigned>(this->baseline_sample_count_),
-        static_cast<unsigned>(this->compensated_packet_count_)
-    );
-
-    if (status == RX_GAIN_READY || status == RX_GAIN_FORCE) {
-      ESP_LOGI(
-          TAG,
-          "RX gain baseline collected: samples=%u ready_state=%s",
-          static_cast<unsigned>(this->baseline_sample_count_),
-          status_name
-      );
-    }
-  }
-
   if (status == RX_GAIN_COLLECT) {
     esp_err_t err = esp_csi_gain_ctrl_record_rx_gain(agc_gain, fft_gain);
     if (err != ESP_OK) {
       ESP_LOGW(TAG, "esp_csi_gain_ctrl_record_rx_gain failed: %s", esp_err_to_name(err));
-    } else {
-      this->baseline_sample_count_++;
-      if (this->baseline_sample_count_ == 1 || (this->baseline_sample_count_ % 64) == 0) {
-        ESP_LOGI(
-            TAG,
-            "RX gain baseline collecting: samples=%u agc=%u fft=%d",
-            static_cast<unsigned>(this->baseline_sample_count_),
-            static_cast<unsigned>(agc_gain),
-            static_cast<int>(fft_gain)
-        );
-      }
     }
 
-    ESP_LOGD(
-        TAG,
-        "RX gain packet processed: state=%s agc=%u fft=%d compensation_applied=false factor=1.000 baseline_samples=%u",
-        status_name,
-        static_cast<unsigned>(agc_gain),
-        static_cast<int>(fft_gain),
-        static_cast<unsigned>(this->baseline_sample_count_)
-    );
     return;
   }
 
   if (status != RX_GAIN_READY && status != RX_GAIN_FORCE) {
-    ESP_LOGD(
-        TAG,
-        "RX gain packet skipped: state=%s agc=%u fft=%d compensation_applied=false factor=1.000",
-        status_name,
-        static_cast<unsigned>(agc_gain),
-        static_cast<int>(fft_gain)
-    );
     return;
   }
 
   this->compensated_bytes_.assign(input.raw_bytes, input.raw_bytes + input.len);
-
-  const bool log_compensation = this->compensation_log_countdown_ == 0;
-  uint32_t raw_abs_sum = 0;
-  if (log_compensation) {
-    for (uint16_t i = 0; i < input.len; i++) {
-      const int value = static_cast<int>(input.raw_bytes[i]);
-      raw_abs_sum += static_cast<uint32_t>(value < 0 ? -value : value);
-    }
-  }
 
   float compensate_gain = 1.0f;
   esp_err_t err = esp_csi_gain_ctrl_compensate_rx_gain(
@@ -150,54 +74,10 @@ void GainCompensationPreprocessor::process(
   );
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "esp_csi_gain_ctrl_compensate_rx_gain failed: %s", esp_err_to_name(err));
-    ESP_LOGD(
-        TAG,
-        "RX gain packet compensation failed: state=%s agc=%u fft=%d compensation_applied=false factor=%.3f",
-        status_name,
-        static_cast<unsigned>(agc_gain),
-        static_cast<int>(fft_gain),
-        static_cast<double>(compensate_gain)
-    );
     return;
   }
 
-  uint32_t compensated_abs_sum = 0;
-  if (log_compensation) {
-    for (uint16_t i = 0; i < input.len; i++) {
-      const int value = static_cast<int>(this->compensated_bytes_[i]);
-      compensated_abs_sum += static_cast<uint32_t>(value < 0 ? -value : value);
-    }
-  }
-
-  this->compensated_packet_count_++;
-  ESP_LOGD(
-      TAG,
-      "RX gain packet compensated: state=%s agc=%u fft=%d compensation_applied=true factor=%.3f",
-      status_name,
-      static_cast<unsigned>(agc_gain),
-      static_cast<int>(fft_gain),
-      static_cast<double>(compensate_gain)
-  );
-
-  if (log_compensation) {
-    ESP_LOGI(
-        TAG,
-        "RX gain compensation active: packets=%u baseline_samples=%u factor=%.3f agc=%u fft=%d raw_sum=%u compensated_sum=%u",
-        static_cast<unsigned>(this->compensated_packet_count_),
-        static_cast<unsigned>(this->baseline_sample_count_),
-        static_cast<double>(compensate_gain),
-        static_cast<unsigned>(agc_gain),
-        static_cast<int>(fft_gain),
-        static_cast<unsigned>(raw_abs_sum),
-        static_cast<unsigned>(compensated_abs_sum)
-    );
-    this->compensation_log_countdown_ = 255;
-  } else {
-    this->compensation_log_countdown_--;
-  }
-
   output.raw_bytes = this->compensated_bytes_.data();
-  output.gain_compensated = true;
 #else
   static bool warned = false;
   if (!warned) {

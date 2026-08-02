@@ -416,12 +416,6 @@ void ESPWiFiSensing::csi_callback_(
 
   const CsiPacket &processed_packet = self->pipeline_.latest_packet();
 
-#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
-  if (processed_packet.gain_compensated) {
-    ESP_LOGVV(TAG, "CSI metric source: compensated gain buffer");
-  }
-#endif
-
   uint32_t metric = 0;
   if (processed_packet.raw_bytes != nullptr) {
     for (uint16_t i = 0; i < processed_packet.len; i++) {
