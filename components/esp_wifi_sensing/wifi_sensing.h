@@ -22,6 +22,7 @@ class ESPWiFiSensing : public Component {
   void loop() override;
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
+  void set_debug_dump_csi_enabled(bool enabled);
 
  protected:
   static void csi_callback_(
@@ -31,6 +32,7 @@ class ESPWiFiSensing : public Component {
 
   bool start_csi_();
   bool start_ping_();
+  void maybe_dump_csi_debug_(const wifi_csi_info_t *data, const int8_t *buf);
 
   // CSI
   volatile uint32_t csi_packet_count_{0};
@@ -55,6 +57,8 @@ class ESPWiFiSensing : public Component {
   bool csi_started_{false};
   bool ping_started_{false};
   bool gain_compensation_enabled_{false};
+  bool debug_dump_csi_enabled_{false};
+  uint16_t debug_dump_csi_count_{0};
 
   esp_ping_handle_t ping_handle_{nullptr};
 

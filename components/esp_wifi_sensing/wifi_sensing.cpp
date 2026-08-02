@@ -1,9 +1,14 @@
 #include "wifi_sensing.h"
 
 #include <cstdlib>
+#include <cstdio>
 
 #include "esp_err.h"
 #include "esp_netif.h"
+
+#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
+#include "esp_csi_gain_ctrl.h"
+#endif
 
 namespace esphome {
 /**
@@ -132,10 +137,19 @@ void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
 }
 
 
+void ESPWiFiSensing::set_debug_dump_csi_enabled(bool enabled) {
+  this->debug_dump_csi_enabled_ = enabled;
+  this->debug_dump_csi_count_ = 0;
+}
+
+
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
   this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
+  if (this->debug_dump_csi_enabled_) {
+    ESP_LOGW(TAG, "Temporary CSI debug dump enabled: dumping 500 raw CSI packets as CSV");
+  }
 }
 
 
@@ -376,6 +390,44 @@ bool ESPWiFiSensing::start_ping_() {
 }
 
 
+void ESPWiFiSensing::maybe_dump_csi_debug_(
+    const wifi_csi_info_t *data,
+    const int8_t *buf
+) {
+  if (!this->debug_dump_csi_enabled_ || this->debug_dump_csi_count_ >= 500) {
+    return;
+  }
+
+  uint8_t agc_gain = 0;
+  int8_t fft_gain = 0;
+
+#ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
+  esp_csi_gain_ctrl_get_rx_gain(&data->rx_ctrl, &agc_gain, &fft_gain);
+#endif
+
+  std::printf(
+      "%u,%u,%d,%u",
+      static_cast<unsigned>(millis()),
+      static_cast<unsigned>(agc_gain),
+      static_cast<int>(fft_gain),
+      static_cast<unsigned>(data->len)
+  );
+
+  for (uint16_t i = 0; i < 256; i++) {
+    const int value = i < data->len ? static_cast<int>(buf[i]) : 0;
+    std::printf(",%d", value);
+  }
+
+  std::printf("\n");
+
+  this->debug_dump_csi_count_++;
+  if (this->debug_dump_csi_count_ >= 500) {
+    this->debug_dump_csi_enabled_ = false;
+    ESP_LOGI(TAG, "Temporary CSI debug dump complete after 500 packets");
+  }
+}
+
+
 void ESPWiFiSensing::csi_callback_(
     void *ctx,
     wifi_csi_info_t *data
@@ -406,6 +458,8 @@ void ESPWiFiSensing::csi_callback_(
 
   const int8_t *buf =
       reinterpret_cast<const int8_t *>(data->buf);
+
+  self->maybe_dump_csi_debug_(data, buf);
 
   CsiPacket packet{};
   packet.len = data->len;
@@ -438,6 +492,7 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
   ESP_LOGCONFIG(TAG, "  Metric: absolute CSI sum");
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Debug CSI dump: %s", this->debug_dump_csi_enabled_ ? "ENABLED" : "disabled");
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
 
