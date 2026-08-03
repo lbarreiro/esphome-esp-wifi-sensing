@@ -14,7 +14,7 @@ ESPWiFiSensing = esp_wifi_sensing_ns.class_(
     cg.Component,
 )
 
-CsiAlgorithm = esp_wifi_sensing_ns.enum("CsiAlgorithm")
+CsiAlgorithm = esp_wifi_sensing_ns.enum("CsiAlgorithm", is_class=True)
 ALGORITHMS = {
     "absolute_sum": CsiAlgorithm.ABSOLUTE_SUM,
     "variance": CsiAlgorithm.VARIANCE,
