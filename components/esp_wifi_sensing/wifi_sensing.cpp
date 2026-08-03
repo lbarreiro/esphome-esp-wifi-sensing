@@ -412,6 +412,7 @@ void ESPWiFiSensing::csi_callback_(
   packet.len = data->len;
   packet.raw_bytes = buf;
   packet.rx_ctrl = &data->rx_ctrl;
+  packet.first_word_invalid = data->first_word_invalid;
 
   self->pipeline_.process_packet(packet);
 
