@@ -23,6 +23,7 @@ struct ParsedCsiPacket {
   size_t count{0};
   bool truncated{false};
   bool first_word_invalid{false};
+  bool layout_supported{false};
 };
 
 class CsiParser {

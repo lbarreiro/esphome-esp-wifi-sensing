@@ -51,7 +51,7 @@ Existing metric reporting
 - EspIdfCsiDriver: Low-level integration class that interacts with ESP-IDF CSI APIs to start CSI capture and register the callback entry point.
 - CsiPipeline: Central processing coordinator that receives CSI packets, applies gain compensation, parses structured subcarriers, and preserves the component’s existing runtime behavior.
 - CsiPacket: Data container representing raw CSI bytes, receive metadata, and the ESP-IDF `first_word_invalid` flag needed by downstream stages.
-- CsiParser: Reusable parsing layer that maps the ESP32-C6 CSI byte layout into valid OFDM subcarriers, excluding null and guard carriers and exposing subcarrier index, I component, Q component, amplitude, and power.
+- CsiParser: Reusable parsing layer that maps supported ESP32-C6 CSI byte layouts into valid OFDM subcarriers, excluding null and guard carriers and exposing subcarrier index, I component, Q component, amplitude, and power. The current parser intentionally supports only layouts that can be identified without unavailable RX metadata.
 - ThresholdAlgorithm: Current algorithm stage that performs the existing threshold-style metric transformation while preserving the prior logic.
 - VarianceAlgorithm: Current raw-byte temporal variance metric implementation.
 - GainCompensationPreprocessor: Optional preprocessing stage that compensates raw CSI bytes for RX gain changes before parsing or existing metric calculation.

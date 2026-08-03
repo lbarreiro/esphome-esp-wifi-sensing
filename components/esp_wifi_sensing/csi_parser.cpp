@@ -7,44 +7,7 @@ namespace esp_wifi_sensing {
 
 namespace {
 
-struct CsiRxMetadata {
-  bool ht{false};
-  bool cwb40{false};
-  bool stbc{false};
-  bool secondary_below{false};
-  bool secondary_above{false};
-};
-
-CsiRxMetadata get_rx_metadata(const CsiPacket &packet) {
-  CsiRxMetadata metadata{};
-
-  if (packet.rx_ctrl == nullptr) {
-    return metadata;
-  }
-
-#if CONFIG_SOC_WIFI_HE_SUPPORT
-  metadata.ht = packet.rx_ctrl->cur_bb_format == RX_BB_FORMAT_HT;
-  metadata.cwb40 = packet.rx_ctrl->second != WIFI_SECOND_CHAN_NONE;
-  metadata.secondary_below = packet.rx_ctrl->second == WIFI_SECOND_CHAN_BELOW;
-  metadata.secondary_above = packet.rx_ctrl->second == WIFI_SECOND_CHAN_ABOVE;
-#else
-  metadata.ht = packet.rx_ctrl->sig_mode != 0;
-  metadata.cwb40 = packet.rx_ctrl->cwb != 0;
-  metadata.secondary_below = packet.rx_ctrl->secondary_channel == WIFI_SECOND_CHAN_BELOW;
-  metadata.secondary_above = packet.rx_ctrl->secondary_channel == WIFI_SECOND_CHAN_ABOVE;
-  metadata.stbc = packet.rx_ctrl->stbc != 0;
-#endif
-
-  if (metadata.ht && !metadata.stbc) {
-    if (metadata.cwb40) {
-      metadata.stbc = packet.len >= 612;
-    } else {
-      metadata.stbc = packet.len >= 384;
-    }
-  }
-
-  return metadata;
-}
+constexpr uint16_t CSI_LEN_HT20_NON_STBC = 256;
 
 }  // namespace
 
@@ -57,67 +20,18 @@ const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet) {
 
   this->parsed_packet_.first_word_invalid = packet.first_word_invalid;
 
-  const CsiRxMetadata metadata = get_rx_metadata(packet);
-  const bool ht = metadata.ht;
-  const bool cwb40 = metadata.cwb40;
-  const bool stbc = metadata.stbc;
-  const bool secondary_below = metadata.secondary_below;
-  const bool secondary_above = metadata.secondary_above;
+  if (packet.len != CSI_LEN_HT20_NON_STBC) {
+    return this->parsed_packet_;
+  }
+
+  this->parsed_packet_.layout_supported = true;
 
   uint16_t offset = 0;
 
-  if (!ht) {
-    if (secondary_above) {
-      this->parse_range_(packet, offset, -64, -1, PhyMode::NON_HT);
-    } else if (secondary_below) {
-      this->parse_range_(packet, offset, 0, 63, PhyMode::NON_HT);
-    } else {
-      this->parse_range_(packet, offset, 0, 31, PhyMode::NON_HT);
-      this->parse_range_(packet, offset, -32, -1, PhyMode::NON_HT);
-    }
-    return this->parsed_packet_;
-  }
-
-  PhyMode phy_mode = cwb40 ? PhyMode::HT40 : PhyMode::HT20;
-
-  if (secondary_above) {
-    this->parse_range_(packet, offset, -64, -1, phy_mode);  // LLTF
-  } else if (secondary_below) {
-    this->parse_range_(packet, offset, 0, 63, phy_mode);  // LLTF
-  } else {
-    this->parse_range_(packet, offset, 0, 31, phy_mode);  // LLTF
-    this->parse_range_(packet, offset, -32, -1, phy_mode);
-  }
-
-  if (offset >= packet.len) {
-    return this->parsed_packet_;
-  }
-
-  if (!cwb40) {
-    this->parse_range_(packet, offset, 0, 31, phy_mode);  // HT-LTF
-    this->parse_range_(packet, offset, -32, -1, phy_mode);
-
-    if (stbc && offset < packet.len) {
-      this->parse_range_(packet, offset, 0, 31, phy_mode);  // STBC-HT-LTF
-      this->parse_range_(packet, offset, -32, -1, phy_mode);
-    }
-    return this->parsed_packet_;
-  }
-
-  if (stbc) {
-    this->parse_range_(packet, offset, 0, 60, phy_mode);  // HT-LTF
-    this->parse_range_(packet, offset, -60, -1, phy_mode);
-  } else {
-    this->parse_range_(packet, offset, 0, 63, phy_mode);  // HT-LTF
-    this->parse_range_(packet, offset, -64, -1, phy_mode);
-  }
-
-  if (!stbc || offset >= packet.len) {
-    return this->parsed_packet_;
-  }
-
-  this->parse_range_(packet, offset, 0, 60, phy_mode);  // STBC-HT-LTF
-  this->parse_range_(packet, offset, -60, -1, phy_mode);
+  this->parse_range_(packet, offset, 0, 31, PhyMode::HT20);  // LLTF
+  this->parse_range_(packet, offset, -32, -1, PhyMode::HT20);
+  this->parse_range_(packet, offset, 0, 31, PhyMode::HT20);  // HT-LTF
+  this->parse_range_(packet, offset, -32, -1, PhyMode::HT20);
 
   return this->parsed_packet_;
 }
@@ -126,6 +40,7 @@ void CsiParser::reset_() {
   this->parsed_packet_.count = 0;
   this->parsed_packet_.truncated = false;
   this->parsed_packet_.first_word_invalid = false;
+  this->parsed_packet_.layout_supported = false;
 }
 
 void CsiParser::parse_range_(const CsiPacket &packet, uint16_t &offset, int16_t start, int16_t end, PhyMode phy_mode) {
