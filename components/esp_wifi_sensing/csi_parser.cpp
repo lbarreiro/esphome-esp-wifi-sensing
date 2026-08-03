@@ -7,23 +7,43 @@ namespace esp_wifi_sensing {
 
 namespace {
 
-bool is_ht_packet(const wifi_pkt_rx_ctrl_t *rx_ctrl) {
-  return rx_ctrl != nullptr && rx_ctrl->sig_mode != 0;
-}
+struct CsiRxMetadata {
+  bool ht{false};
+  bool cwb40{false};
+  bool stbc{false};
+  bool secondary_below{false};
+  bool secondary_above{false};
+};
 
-bool is_40mhz_packet(const wifi_pkt_rx_ctrl_t *rx_ctrl) {
-  return rx_ctrl != nullptr && rx_ctrl->cwb != 0;
-}
+CsiRxMetadata get_rx_metadata(const CsiPacket &packet) {
+  CsiRxMetadata metadata{};
 
-bool is_stbc_packet(const wifi_pkt_rx_ctrl_t *rx_ctrl) {
-  return rx_ctrl != nullptr && rx_ctrl->stbc != 0;
-}
-
-int secondary_channel(const wifi_pkt_rx_ctrl_t *rx_ctrl) {
-  if (rx_ctrl == nullptr) {
-    return 0;
+  if (packet.rx_ctrl == nullptr) {
+    return metadata;
   }
-  return rx_ctrl->secondary_channel;
+
+#if CONFIG_SOC_WIFI_HE_SUPPORT
+  metadata.ht = packet.rx_ctrl->cur_bb_format == RX_BB_FORMAT_HT;
+  metadata.cwb40 = packet.rx_ctrl->second != WIFI_SECOND_CHAN_NONE;
+  metadata.secondary_below = packet.rx_ctrl->second == WIFI_SECOND_CHAN_BELOW;
+  metadata.secondary_above = packet.rx_ctrl->second == WIFI_SECOND_CHAN_ABOVE;
+#else
+  metadata.ht = packet.rx_ctrl->sig_mode != 0;
+  metadata.cwb40 = packet.rx_ctrl->cwb != 0;
+  metadata.secondary_below = packet.rx_ctrl->secondary_channel == WIFI_SECOND_CHAN_BELOW;
+  metadata.secondary_above = packet.rx_ctrl->secondary_channel == WIFI_SECOND_CHAN_ABOVE;
+  metadata.stbc = packet.rx_ctrl->stbc != 0;
+#endif
+
+  if (metadata.ht && !metadata.stbc) {
+    if (metadata.cwb40) {
+      metadata.stbc = packet.len >= 612;
+    } else {
+      metadata.stbc = packet.len >= 384;
+    }
+  }
+
+  return metadata;
 }
 
 }  // namespace
@@ -37,12 +57,12 @@ const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet) {
 
   this->parsed_packet_.first_word_invalid = packet.first_word_invalid;
 
-  const bool ht = is_ht_packet(packet.rx_ctrl);
-  const bool cwb40 = is_40mhz_packet(packet.rx_ctrl);
-  const bool stbc = is_stbc_packet(packet.rx_ctrl);
-  const int secondary = secondary_channel(packet.rx_ctrl);
-  const bool secondary_below = secondary == WIFI_SECOND_CHAN_BELOW;
-  const bool secondary_above = secondary == WIFI_SECOND_CHAN_ABOVE;
+  const CsiRxMetadata metadata = get_rx_metadata(packet);
+  const bool ht = metadata.ht;
+  const bool cwb40 = metadata.cwb40;
+  const bool stbc = metadata.stbc;
+  const bool secondary_below = metadata.secondary_below;
+  const bool secondary_above = metadata.secondary_above;
 
   uint16_t offset = 0;
 
