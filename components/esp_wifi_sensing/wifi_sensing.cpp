@@ -416,19 +416,14 @@ void ESPWiFiSensing::csi_callback_(
 
   self->pipeline_.process_packet(packet);
 
-  const CsiPacket &processed_packet = self->pipeline_.latest_packet();
+  const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 
   uint32_t metric = 0;
 
   if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
-    metric = self->variance_algorithm_.process(processed_packet);
-  } else if (processed_packet.raw_bytes != nullptr) {
-    for (uint16_t i = 0; i < processed_packet.len; i++) {
-      int value = static_cast<int>(processed_packet.raw_bytes[i]);
-      metric += static_cast<uint32_t>(value < 0 ? -value : value);
-    }
-
-    metric = self->algorithm_.process(metric);
+    metric = self->variance_algorithm_.process(parsed_packet);
+  } else {
+    metric = self->absolute_sum_algorithm_.process(parsed_packet);
   }
 
   self->latest_csi_metric_ = metric;

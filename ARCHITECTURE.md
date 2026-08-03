@@ -18,6 +18,8 @@ components/
     ├── espidf_csi_driver.cpp
     ├── gain_compensation_preprocessor.h
     ├── gain_compensation_preprocessor.cpp
+    ├── absolute_sum_algorithm.h
+    ├── absolute_sum_algorithm.cpp
     ├── threshold_algorithm.h
     ├── variance_algorithm.h
     ├── variance_algorithm.cpp
@@ -27,7 +29,7 @@ components/
 
 ## Module overview
 
-The root component entry point is the ESPHome integration in [components/esp_wifi_sensing/wifi_sensing.h](components/esp_wifi_sensing/wifi_sensing.h) and [components/esp_wifi_sensing/wifi_sensing.cpp](components/esp_wifi_sensing/wifi_sensing.cpp), which owns the component lifecycle, CSI callback wiring, periodic logging, and the existing metric calculation logic. The driver layer provides the boundary to ESP-IDF CSI APIs and is responsible for enabling CSI capture and registering the callback that receives raw CSI packets from the Wi-Fi stack. The pipeline layer coordinates the end-to-end flow from incoming CSI data through gain compensation and CSI parsing while preserving the existing raw-byte algorithm behavior. The packet model carries raw CSI bytes and receive metadata, and the parser exposes reusable structured OFDM subcarriers containing subcarrier index, I/Q components, amplitude, and power for future algorithms. The algorithms layer still holds the current decision logic used to transform a CSI packet into the metric that is reported by the component.
+The root component entry point is the ESPHome integration in [components/esp_wifi_sensing/wifi_sensing.h](components/esp_wifi_sensing/wifi_sensing.h) and [components/esp_wifi_sensing/wifi_sensing.cpp](components/esp_wifi_sensing/wifi_sensing.cpp), which owns the component lifecycle, CSI callback wiring, periodic logging, and metric calculation. The driver layer provides the boundary to ESP-IDF CSI APIs and is responsible for enabling CSI capture and registering the callback that receives raw CSI packets from the Wi-Fi stack. The pipeline layer coordinates the end-to-end flow from incoming CSI data through gain compensation and CSI parsing. The packet model carries raw CSI bytes and receive metadata, and the parser exposes reusable structured OFDM subcarriers containing subcarrier index, I/Q components, amplitude, and power. The algorithms layer consumes parsed CSI packets only; the parser is the single component that interprets the raw CSI byte layout.
 
 ## Processing pipeline
 
@@ -40,7 +42,7 @@ Gain compensation preprocessor
     ↓
 CSI parser
     ↓
-Existing algorithm selection
+Selected parsed-CSI algorithm
     ↓
 Existing metric reporting
 ```
@@ -52,8 +54,8 @@ Existing metric reporting
 - CsiPipeline: Central processing coordinator that receives CSI packets, applies gain compensation, parses structured subcarriers, and preserves the component’s existing runtime behavior.
 - CsiPacket: Data container representing raw CSI bytes, receive metadata, and the ESP-IDF `first_word_invalid` flag needed by downstream stages.
 - CsiParser: Reusable parsing layer that maps supported ESP32-C6 CSI byte layouts into valid OFDM subcarriers, excluding null and guard carriers and exposing subcarrier index, I component, Q component, amplitude, and power. The current parser intentionally supports only layouts that can be identified without unavailable RX metadata.
-- ThresholdAlgorithm: Current algorithm stage that performs the existing threshold-style metric transformation while preserving the prior logic.
-- VarianceAlgorithm: Current raw-byte temporal variance metric implementation.
+- AbsoluteSumAlgorithm: Current absolute-sum option implemented over parsed subcarrier power values.
+- VarianceAlgorithm: Current variance option implemented over parsed subcarrier power values.
 - GainCompensationPreprocessor: Optional preprocessing stage that compensates raw CSI bytes for RX gain changes before parsing or existing metric calculation.
 
 ## Modules that already contain production code
@@ -69,7 +71,8 @@ The following modules already contain the functional implementation used by the 
 - [components/esp_wifi_sensing/csi_packet.h](components/esp_wifi_sensing/csi_packet.h)
 - [components/esp_wifi_sensing/csi_parser.h](components/esp_wifi_sensing/csi_parser.h)
 - [components/esp_wifi_sensing/csi_parser.cpp](components/esp_wifi_sensing/csi_parser.cpp)
-- [components/esp_wifi_sensing/threshold_algorithm.h](components/esp_wifi_sensing/threshold_algorithm.h)
+- [components/esp_wifi_sensing/absolute_sum_algorithm.h](components/esp_wifi_sensing/absolute_sum_algorithm.h)
+- [components/esp_wifi_sensing/absolute_sum_algorithm.cpp](components/esp_wifi_sensing/absolute_sum_algorithm.cpp)
 - [components/esp_wifi_sensing/variance_algorithm.h](components/esp_wifi_sensing/variance_algorithm.h)
 - [components/esp_wifi_sensing/variance_algorithm.cpp](components/esp_wifi_sensing/variance_algorithm.cpp)
 - [components/esp_wifi_sensing/gain_compensation_preprocessor.h](components/esp_wifi_sensing/gain_compensation_preprocessor.h)
