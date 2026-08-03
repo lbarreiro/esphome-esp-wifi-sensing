@@ -12,9 +12,15 @@
 #include "csi_pipeline.h"
 #include "csi_packet.h"
 #include "threshold_algorithm.h"
+#include "variance_algorithm.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
+
+enum class CsiAlgorithm {
+  ABSOLUTE_SUM,
+  VARIANCE,
+};
 
 class ESPWiFiSensing : public Component {
  public:
@@ -22,6 +28,7 @@ class ESPWiFiSensing : public Component {
   void loop() override;
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
+  void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
 
  protected:
   static void csi_callback_(
@@ -55,12 +62,14 @@ class ESPWiFiSensing : public Component {
   bool csi_started_{false};
   bool ping_started_{false};
   bool gain_compensation_enabled_{false};
+  CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
   EspIdfCsiDriver driver_{};
   CsiPipeline pipeline_{};
   ThresholdAlgorithm algorithm_{};
+  VarianceAlgorithm variance_algorithm_{};
 };
 
 }  // namespace esp_wifi_sensing

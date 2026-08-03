@@ -395,9 +395,10 @@ void ESPWiFiSensing::csi_callback_(
   self->csi_packet_count_++;
 
   // -------------------------------------------------------
-  // Métrica extremamente simples para o primeiro teste.
+  // Métrica experimental para o teste.
   //
-  // Somamos o valor absoluto de todos os bytes CSI.
+  // O algoritmo selecionado processa o pacote CSI após os
+  // estágios comuns da pipeline.
   //
   // NÃO é ainda um algoritmo de presença.
   // Queremos apenas descobrir se a métrica reage fisicamente
@@ -417,14 +418,19 @@ void ESPWiFiSensing::csi_callback_(
   const CsiPacket &processed_packet = self->pipeline_.latest_packet();
 
   uint32_t metric = 0;
-  if (processed_packet.raw_bytes != nullptr) {
+
+  if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
+    metric = self->variance_algorithm_.process(processed_packet);
+  } else if (processed_packet.raw_bytes != nullptr) {
     for (uint16_t i = 0; i < processed_packet.len; i++) {
       int value = static_cast<int>(processed_packet.raw_bytes[i]);
       metric += static_cast<uint32_t>(value < 0 ? -value : value);
     }
+
+    metric = self->algorithm_.process(metric);
   }
 
-  self->latest_csi_metric_ = self->algorithm_.process(metric);
+  self->latest_csi_metric_ = metric;
   self->latest_csi_len_ = self->pipeline_.latest_len();
   self->new_csi_sample_ = self->pipeline_.has_new_sample();
   self->pipeline_.clear_new_sample();
@@ -436,7 +442,16 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  STEP 5 - CSI variation");
   ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
-  ESP_LOGCONFIG(TAG, "  Metric: absolute CSI sum");
+  ESP_LOGCONFIG(
+      TAG,
+      "  Algorithm: %s",
+      this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "Variance" : "Absolute Sum"
+  );
+  ESP_LOGCONFIG(
+      TAG,
+      "  Metric: %s",
+      this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum"
+  );
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
