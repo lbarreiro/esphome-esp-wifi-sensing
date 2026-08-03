@@ -1,5 +1,7 @@
 #include "variance_algorithm.h"
 
+#include <limits>
+
 namespace esphome {
 namespace esp_wifi_sensing {
 
@@ -12,7 +14,7 @@ uint32_t VarianceAlgorithm::process(const ParsedCsiPacket &packet) {
     this->sample_windows_.resize(packet.count);
   }
 
-  uint32_t metric = 0;
+  uint64_t metric = 0;
 
   for (size_t i = 0; i < packet.count; i++) {
     SampleWindow &window = this->sample_windows_[i];
@@ -42,7 +44,11 @@ uint32_t VarianceAlgorithm::process(const ParsedCsiPacket &packet) {
     metric += variance;
   }
 
-  return metric;
+  if (metric > std::numeric_limits<uint32_t>::max()) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+
+  return static_cast<uint32_t>(metric);
 }
 
 }  // namespace esp_wifi_sensing
