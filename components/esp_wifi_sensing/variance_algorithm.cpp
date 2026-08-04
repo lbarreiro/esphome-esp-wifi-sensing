@@ -1,23 +1,25 @@
 #include "variance_algorithm.h"
 
+#include <limits>
+
 namespace esphome {
 namespace esp_wifi_sensing {
 
-uint32_t VarianceAlgorithm::process(const CsiPacket &packet) {
-  if (packet.raw_bytes == nullptr || packet.len == 0) {
+uint32_t VarianceAlgorithm::process(const ParsedCsiPacket &packet) {
+  if (packet.count == 0) {
     return 0;
   }
 
-  if (this->sample_windows_.size() < packet.len) {
-    this->sample_windows_.resize(packet.len);
+  if (this->sample_windows_.size() < packet.count) {
+    this->sample_windows_.resize(packet.count);
   }
 
-  uint32_t metric = 0;
+  uint64_t metric = 0;
 
-  for (uint16_t i = 0; i < packet.len; i++) {
+  for (size_t i = 0; i < packet.count; i++) {
     SampleWindow &window = this->sample_windows_[i];
 
-    window.values[window.next] = packet.raw_bytes[i];
+    window.values[window.next] = packet.subcarriers[i].power;
     window.next = (window.next + 1) % kWindowSize;
 
     if (window.count < kWindowSize) {
@@ -42,7 +44,11 @@ uint32_t VarianceAlgorithm::process(const CsiPacket &packet) {
     metric += variance;
   }
 
-  return metric;
+  if (metric > std::numeric_limits<uint32_t>::max()) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+
+  return static_cast<uint32_t>(metric);
 }
 
 }  // namespace esp_wifi_sensing

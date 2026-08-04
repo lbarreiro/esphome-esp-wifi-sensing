@@ -4,20 +4,20 @@
 #include <cstdint>
 #include <vector>
 
-#include "csi_packet.h"
+#include "csi_parser.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
 
 class VarianceAlgorithm {
  public:
-  uint32_t process(const CsiPacket &packet);
+  uint32_t process(const ParsedCsiPacket &packet);
 
  private:
   static constexpr uint8_t kWindowSize = 32;
 
   struct SampleWindow {
-    std::array<int8_t, kWindowSize> values{};
+    std::array<uint16_t, kWindowSize> values{};
     uint8_t next{0};
     uint8_t count{0};
   };

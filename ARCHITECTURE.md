@@ -6,42 +6,43 @@
 components/
 └── esp_wifi_sensing/
     ├── __init__.py
+    ├── csi_packet.h
+    ├── csi_parser.h
+    ├── csi_parser.cpp
+    ├── csi_pipeline.h
+    ├── csi_pipeline.cpp
+    ├── csi_sensor.h
+    ├── empty_feature.h
+    ├── empty_preprocessor.h
+    ├── espidf_csi_driver.h
+    ├── espidf_csi_driver.cpp
+    ├── gain_compensation_preprocessor.h
+    ├── gain_compensation_preprocessor.cpp
+    ├── absolute_sum_algorithm.h
+    ├── absolute_sum_algorithm.cpp
+    ├── threshold_algorithm.h
+    ├── variance_algorithm.h
+    ├── variance_algorithm.cpp
     ├── wifi_sensing.h
-    ├── wifi_sensing.cpp
-    ├── algorithms/
-    │   └── threshold_algorithm.h
-    ├── driver/
-    │   ├── espidf_csi_driver.h
-    │   └── espidf_csi_driver.cpp
-    ├── features/
-    │   └── empty_feature.h
-    ├── models/
-    │   └── csi_packet.h
-    ├── pipeline/
-    │   ├── csi_pipeline.h
-    │   └── csi_pipeline.cpp
-    ├── preprocessing/
-    │   └── empty_preprocessor.h
-    └── sensors/
-        └── csi_sensor.h
+    └── wifi_sensing.cpp
 ```
 
 ## Module overview
 
-The root component entry point is the ESPHome integration in [components/esp_wifi_sensing/wifi_sensing.h](components/esp_wifi_sensing/wifi_sensing.h) and [components/esp_wifi_sensing/wifi_sensing.cpp](components/esp_wifi_sensing/wifi_sensing.cpp), which owns the component lifecycle, CSI callback wiring, periodic logging, and the existing metric calculation logic. The driver layer provides the boundary to ESP-IDF CSI APIs and is responsible for enabling CSI capture and registering the callback that receives raw CSI packets from the Wi-Fi stack. The pipeline layer coordinates the end-to-end flow from incoming CSI data to the current metric output while preserving the existing behavior of the original component. The models layer defines the packet container used to carry CSI data and related state between the different stages of the pipeline. The algorithms layer holds the current decision logic used to transform a CSI packet into the metric that is reported by the component. The preprocessing and features layers are scaffolded to support future processing stages, while the sensors layer is the output-facing boundary for exposing processed information.
+The root component entry point is the ESPHome integration in [components/esp_wifi_sensing/wifi_sensing.h](components/esp_wifi_sensing/wifi_sensing.h) and [components/esp_wifi_sensing/wifi_sensing.cpp](components/esp_wifi_sensing/wifi_sensing.cpp), which owns the component lifecycle, CSI callback wiring, periodic logging, and metric calculation. The driver layer provides the boundary to ESP-IDF CSI APIs and is responsible for enabling CSI capture and registering the callback that receives raw CSI packets from the Wi-Fi stack. The pipeline layer coordinates the end-to-end flow from incoming CSI data through gain compensation and CSI parsing. The packet model carries raw CSI bytes and receive metadata, and the parser exposes reusable structured OFDM subcarriers containing subcarrier index, I/Q components, amplitude, and power. The algorithms layer consumes parsed CSI packets only; the parser is the single component that interprets the raw CSI byte layout.
 
 ## Processing pipeline
 
 ```text
 CSI callback
     ↓
-ESP-IDF driver
+Raw CSI packet model
     ↓
-CSI packet model
+Gain compensation preprocessor
     ↓
-Pipeline coordinator
+CSI parser
     ↓
-Threshold algorithm
+Selected parsed-CSI algorithm
     ↓
 Existing metric reporting
 ```
@@ -50,20 +51,12 @@ Existing metric reporting
 
 - ESPWiFiSensing: Main ESPHome component class that manages setup, loop execution, configuration, callback registration, and the existing reporting state.
 - EspIdfCsiDriver: Low-level integration class that interacts with ESP-IDF CSI APIs to start CSI capture and register the callback entry point.
-- CsiPipeline: Central processing coordinator that receives CSI packets, routes them through the current processing stages, and preserves the component’s existing runtime behavior.
-- CsiPacket: Data container representing a CSI packet and the fields needed to carry information between pipeline stages.
-- ThresholdAlgorithm: Current algorithm stage that performs the existing threshold-style metric transformation while preserving the prior logic.
-- EmptyPreprocessor: Placeholder preprocessing stage for future data-cleaning or normalization work.
-- EmptyFeature: Placeholder feature-extraction stage for future derived features.
-- CsiSensor: Placeholder output stage for future sensor or reporting integration.
-
-## Placeholder modules for future work
-
-The following modules are intentionally placeholders and do not yet implement production behavior:
-
-- [components/esp_wifi_sensing/preprocessing/empty_preprocessor.h](components/esp_wifi_sensing/preprocessing/empty_preprocessor.h)
-- [components/esp_wifi_sensing/features/empty_feature.h](components/esp_wifi_sensing/features/empty_feature.h)
-- [components/esp_wifi_sensing/sensors/csi_sensor.h](components/esp_wifi_sensing/sensors/csi_sensor.h)
+- CsiPipeline: Central processing coordinator that receives CSI packets, applies gain compensation, parses structured subcarriers, and preserves the component’s existing runtime behavior.
+- CsiPacket: Data container representing raw CSI bytes, receive metadata, and the ESP-IDF `first_word_invalid` flag needed by downstream stages.
+- CsiParser: Reusable parsing layer that maps supported ESP32-C6 CSI byte layouts into valid OFDM subcarriers, excluding null and guard carriers and exposing subcarrier index, I component, Q component, amplitude, and power. The current parser intentionally supports only layouts that can be identified without unavailable RX metadata.
+- AbsoluteSumAlgorithm: Current absolute-sum option implemented over parsed subcarrier power values.
+- VarianceAlgorithm: Current variance option implemented over parsed subcarrier power values.
+- GainCompensationPreprocessor: Optional preprocessing stage that compensates raw CSI bytes for RX gain changes before parsing or existing metric calculation.
 
 ## Modules that already contain production code
 
@@ -71,9 +64,16 @@ The following modules already contain the functional implementation used by the 
 
 - [components/esp_wifi_sensing/wifi_sensing.h](components/esp_wifi_sensing/wifi_sensing.h)
 - [components/esp_wifi_sensing/wifi_sensing.cpp](components/esp_wifi_sensing/wifi_sensing.cpp)
-- [components/esp_wifi_sensing/driver/espidf_csi_driver.h](components/esp_wifi_sensing/driver/espidf_csi_driver.h)
-- [components/esp_wifi_sensing/driver/espidf_csi_driver.cpp](components/esp_wifi_sensing/driver/espidf_csi_driver.cpp)
-- [components/esp_wifi_sensing/pipeline/csi_pipeline.h](components/esp_wifi_sensing/pipeline/csi_pipeline.h)
-- [components/esp_wifi_sensing/pipeline/csi_pipeline.cpp](components/esp_wifi_sensing/pipeline/csi_pipeline.cpp)
-- [components/esp_wifi_sensing/models/csi_packet.h](components/esp_wifi_sensing/models/csi_packet.h)
-- [components/esp_wifi_sensing/algorithms/threshold_algorithm.h](components/esp_wifi_sensing/algorithms/threshold_algorithm.h)
+- [components/esp_wifi_sensing/espidf_csi_driver.h](components/esp_wifi_sensing/espidf_csi_driver.h)
+- [components/esp_wifi_sensing/espidf_csi_driver.cpp](components/esp_wifi_sensing/espidf_csi_driver.cpp)
+- [components/esp_wifi_sensing/csi_pipeline.h](components/esp_wifi_sensing/csi_pipeline.h)
+- [components/esp_wifi_sensing/csi_pipeline.cpp](components/esp_wifi_sensing/csi_pipeline.cpp)
+- [components/esp_wifi_sensing/csi_packet.h](components/esp_wifi_sensing/csi_packet.h)
+- [components/esp_wifi_sensing/csi_parser.h](components/esp_wifi_sensing/csi_parser.h)
+- [components/esp_wifi_sensing/csi_parser.cpp](components/esp_wifi_sensing/csi_parser.cpp)
+- [components/esp_wifi_sensing/absolute_sum_algorithm.h](components/esp_wifi_sensing/absolute_sum_algorithm.h)
+- [components/esp_wifi_sensing/absolute_sum_algorithm.cpp](components/esp_wifi_sensing/absolute_sum_algorithm.cpp)
+- [components/esp_wifi_sensing/variance_algorithm.h](components/esp_wifi_sensing/variance_algorithm.h)
+- [components/esp_wifi_sensing/variance_algorithm.cpp](components/esp_wifi_sensing/variance_algorithm.cpp)
+- [components/esp_wifi_sensing/gain_compensation_preprocessor.h](components/esp_wifi_sensing/gain_compensation_preprocessor.h)
+- [components/esp_wifi_sensing/gain_compensation_preprocessor.cpp](components/esp_wifi_sensing/gain_compensation_preprocessor.cpp)

@@ -11,7 +11,7 @@
 #include "espidf_csi_driver.h"
 #include "csi_pipeline.h"
 #include "csi_packet.h"
-#include "threshold_algorithm.h"
+#include "absolute_sum_algorithm.h"
 #include "variance_algorithm.h"
 
 namespace esphome {
@@ -68,7 +68,7 @@ class ESPWiFiSensing : public Component {
 
   EspIdfCsiDriver driver_{};
   CsiPipeline pipeline_{};
-  ThresholdAlgorithm algorithm_{};
+  AbsoluteSumAlgorithm absolute_sum_algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
 };
 

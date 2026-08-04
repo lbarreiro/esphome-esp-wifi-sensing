@@ -4,6 +4,7 @@
 
 #include "csi_packet.h"
 #include "gain_compensation_preprocessor.h"
+#include "csi_parser.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -15,6 +16,7 @@ class CsiPipeline {
   void process_packet(const CsiPacket &packet);
   uint16_t latest_len() const { return latest_len_; }
   const CsiPacket &latest_packet() const { return latest_packet_; }
+  const ParsedCsiPacket &latest_parsed_packet() const { return csi_parser_.latest_packet(); }
   void set_gain_compensation_enabled(bool enabled) {
     gain_compensation_preprocessor_.set_enabled(enabled);
   }
@@ -23,6 +25,7 @@ class CsiPipeline {
 
  private:
   GainCompensationPreprocessor gain_compensation_preprocessor_{};
+  CsiParser csi_parser_{};
   CsiPacket latest_packet_{};
   uint16_t latest_len_{0};
   bool has_new_sample_{false};
