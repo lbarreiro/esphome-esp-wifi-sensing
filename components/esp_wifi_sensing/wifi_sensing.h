@@ -5,6 +5,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
@@ -32,6 +33,9 @@ class ESPWiFiSensing : public Component {
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
   void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
   void set_variation_avg_sensor(sensor::Sensor *sensor) { this->variation_avg_sensor_ = sensor; }
+  void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
+  void set_motion_threshold(uint32_t threshold) { this->motion_threshold_ = threshold; }
+  void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
 
  protected:
   static void csi_callback_(
@@ -69,6 +73,12 @@ class ESPWiFiSensing : public Component {
 
   sensor::Sensor *metric_sensor_{nullptr};
   sensor::Sensor *variation_avg_sensor_{nullptr};
+  binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
+
+  uint32_t motion_threshold_{6000};
+  uint32_t motion_debounce_{2};
+  uint32_t consecutive_above_threshold_{0};
+  bool motion_state_{false};
 
   esp_ping_handle_t ping_handle_{nullptr};
 

@@ -24,6 +24,8 @@ external_components:
 esp_wifi_sensing:
   id: wifi_sensing
   gain_compensation: false
+  threshold: 6000
+  debounce: 2
 
 sensor:
   - platform: esp_wifi_sensing
@@ -32,3 +34,10 @@ sensor:
       name: "CSI Metric"
     variation_avg:
       name: "CSI Variation Avg"
+
+
+binary_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    motion:
+      name: "CSI Motion"

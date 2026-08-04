@@ -244,6 +244,19 @@ void ESPWiFiSensing::loop() {
     this->variation_avg_sensor_->publish_state(average_variation);
   }
 
+  if (average_variation > this->motion_threshold_) {
+    this->consecutive_above_threshold_++;
+    this->motion_state_ =
+        this->consecutive_above_threshold_ >= this->motion_debounce_;
+  } else {
+    this->consecutive_above_threshold_ = 0;
+    this->motion_state_ = false;
+  }
+
+  if (this->motion_binary_sensor_ != nullptr) {
+    this->motion_binary_sensor_->publish_state(this->motion_state_);
+  }
+
   // Começar uma nova janela estatística.
   this->variation_sum_ = 0;
   this->variation_max_ = 0;
@@ -457,8 +470,11 @@ void ESPWiFiSensing::dump_config() {
       this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum"
   );
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Threshold: %u", static_cast<unsigned>(this->motion_threshold_));
+  ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
   LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
   LOG_SENSOR("  ", "CSI Variation Avg", this->variation_avg_sensor_);
+  LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
 
