@@ -23,3 +23,10 @@ external_components:
 
 esp_wifi_sensing:
   gain_compensation: false
+
+sensor:
+  - platform: esp_wifi_sensing
+    metric:
+      name: "CSI Metric"
+    variation_avg:
+      name: "CSI Variation Avg"

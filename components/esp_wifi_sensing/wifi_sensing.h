@@ -4,6 +4,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/components/sensor/sensor.h"
 
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
@@ -29,6 +30,8 @@ class ESPWiFiSensing : public Component {
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
+  void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
+  void set_variation_avg_sensor(sensor::Sensor *sensor) { this->variation_avg_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -63,6 +66,9 @@ class ESPWiFiSensing : public Component {
   bool ping_started_{false};
   bool gain_compensation_enabled_{false};
   CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
+
+  sensor::Sensor *metric_sensor_{nullptr};
+  sensor::Sensor *variation_avg_sensor_{nullptr};
 
   esp_ping_handle_t ping_handle_{nullptr};
 

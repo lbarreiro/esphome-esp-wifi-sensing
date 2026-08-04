@@ -1,0 +1,40 @@
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.components import sensor
+from esphome.const import (
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
+)
+
+from . import CONF_ESP_WIFI_SENSING_ID, ESPWiFiSensing
+
+CONF_METRIC = "metric"
+CONF_VARIATION_AVG = "variation_avg"
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_ESP_WIFI_SENSING_ID): cv.use_id(ESPWiFiSensing),
+        cv.Optional(CONF_METRIC): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_VARIATION_AVG): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+    }
+).extend(cv.has_at_least_one_key(CONF_METRIC, CONF_VARIATION_AVG))
+
+
+async def to_code(config):
+    parent = await cg.get_variable(config[CONF_ESP_WIFI_SENSING_ID])
+
+    if CONF_METRIC in config:
+        sens = await sensor.new_sensor(config[CONF_METRIC])
+        cg.add(parent.set_metric_sensor(sens))
+
+    if CONF_VARIATION_AVG in config:
+        sens = await sensor.new_sensor(config[CONF_VARIATION_AVG])
+        cg.add(parent.set_variation_avg_sensor(sens))

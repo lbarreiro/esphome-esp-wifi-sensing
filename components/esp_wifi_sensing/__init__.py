@@ -4,6 +4,7 @@ from esphome.const import CONF_ID
 
 CONF_ALGORITHM = "algorithm"
 CONF_GAIN_COMPENSATION = "gain_compensation"
+CONF_ESP_WIFI_SENSING_ID = "esp_wifi_sensing_id"
 
 DEPENDENCIES = ["wifi"]
 

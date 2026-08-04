@@ -236,6 +236,14 @@ void ESPWiFiSensing::loop() {
       static_cast<unsigned>(this->variation_max_)
   );
 
+  if (this->metric_sensor_ != nullptr) {
+    this->metric_sensor_->publish_state(this->latest_csi_metric_);
+  }
+
+  if (this->variation_avg_sensor_ != nullptr) {
+    this->variation_avg_sensor_->publish_state(average_variation);
+  }
+
   // Começar uma nova janela estatística.
   this->variation_sum_ = 0;
   this->variation_max_ = 0;
@@ -449,6 +457,8 @@ void ESPWiFiSensing::dump_config() {
       this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum"
   );
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
+  LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
+  LOG_SENSOR("  ", "CSI Variation Avg", this->variation_avg_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
 
