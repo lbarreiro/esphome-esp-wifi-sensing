@@ -22,10 +22,12 @@ external_components:
       path: ..
 
 esp_wifi_sensing:
+  id: wifi_sensing
   gain_compensation: false
 
 sensor:
   - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
     metric:
       name: "CSI Metric"
     variation_avg:

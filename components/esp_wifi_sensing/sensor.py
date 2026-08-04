@@ -2,18 +2,21 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor
 from esphome.const import (
+    CONF_ID,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
 )
 
-from . import CONF_ESP_WIFI_SENSING_ID, ESPWiFiSensing
+from . import CONF_ESP_WIFI_SENSING_ID, ESP_WIFI_SENSING_COMPONENT_SCHEMA
 
 CONF_METRIC = "metric"
 CONF_VARIATION_AVG = "variation_avg"
 
+DEPENDENCIES = ["esp_wifi_sensing"]
+
 CONFIG_SCHEMA = cv.Schema(
     {
-        cv.GenerateID(CONF_ESP_WIFI_SENSING_ID): cv.use_id(ESPWiFiSensing),
+        cv.GenerateID(CONF_ID): cv.declare_id(cg.EntityBase),
         cv.Optional(CONF_METRIC): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_MEASUREMENT,
@@ -25,7 +28,9 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
     }
-).extend(cv.has_at_least_one_key(CONF_METRIC, CONF_VARIATION_AVG))
+).extend(ESP_WIFI_SENSING_COMPONENT_SCHEMA).extend(
+    cv.has_at_least_one_key(CONF_METRIC, CONF_VARIATION_AVG)
+)
 
 
 async def to_code(config):

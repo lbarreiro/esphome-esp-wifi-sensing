@@ -11,6 +11,7 @@ external_components:
       path: ..
 
 esp_wifi_sensing:
+  id: wifi_sensing
   algorithm: variance
 ```
 
@@ -25,10 +26,12 @@ The published values are the already-calculated runtime metrics:
 
 ```yaml
 esp_wifi_sensing:
+  id: wifi_sensing
   algorithm: variance
 
 sensor:
   - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
     metric:
       name: "CSI Metric"
     variation_avg:

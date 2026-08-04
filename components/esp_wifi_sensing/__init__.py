@@ -21,6 +21,13 @@ ALGORITHMS = {
     "variance": CsiAlgorithm.VARIANCE,
 }
 
+ESP_WIFI_SENSING_COMPONENT_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_ESP_WIFI_SENSING_ID): cv.use_id(ESPWiFiSensing),
+    }
+)
+
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(ESPWiFiSensing),
