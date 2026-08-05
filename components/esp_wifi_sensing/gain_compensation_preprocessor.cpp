@@ -20,6 +20,7 @@ void GainCompensationPreprocessor::set_enabled(bool enabled) {
   this->enabled_ = enabled;
   this->compensated_bytes_.clear();
   this->ready_ = !enabled;
+  this->ready_transition_ = false;
 
 #ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
   if (enabled) {
@@ -79,6 +80,9 @@ void GainCompensationPreprocessor::process(
   }
 
   output.raw_bytes = this->compensated_bytes_.data();
+  if (!this->ready_) {
+    this->ready_transition_ = true;
+  }
   this->ready_ = true;
 #else
   static bool warned = false;

@@ -172,6 +172,15 @@ void ESPWiFiSensing::loop() {
   // 3. Processar nova métrica CSI
   // -------------------------------------------------------
 
+  if (this->statistics_window_restart_pending_) {
+    this->statistics_window_restart_pending_ = false;
+    this->have_previous_sample_ = false;
+    this->variation_sum_ = 0;
+    this->variation_max_ = 0;
+    this->variation_samples_ = 0;
+    this->last_report_time_ = millis();
+  }
+
   if (this->new_csi_sample_) {
     const uint32_t metric = this->latest_csi_metric_;
 
@@ -479,6 +488,9 @@ void ESPWiFiSensing::csi_callback_(
   packet.first_word_invalid = data->first_word_invalid;
 
   self->pipeline_.process_packet(packet);
+  if (self->pipeline_.consume_gain_compensation_ready_transition()) {
+    self->statistics_window_restart_pending_ = true;
+  }
 
   const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 
