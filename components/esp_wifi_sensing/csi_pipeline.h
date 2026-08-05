@@ -21,7 +21,6 @@ class CsiPipeline {
     gain_compensation_preprocessor_.set_enabled(enabled);
   }
   bool gain_compensation_ready() const { return gain_compensation_preprocessor_.is_ready(); }
-  bool consume_gain_compensation_ready_transition() { return gain_compensation_preprocessor_.consume_ready_transition(); }
   bool has_new_sample() const { return has_new_sample_; }
   void clear_new_sample() { has_new_sample_ = false; }
 

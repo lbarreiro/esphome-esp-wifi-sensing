@@ -97,7 +97,7 @@ class ESPWiFiSensing : public Component {
   uint32_t motion_debounce_{2};
   uint32_t consecutive_above_threshold_{0};
   bool motion_state_{false};
-  volatile bool statistics_window_restart_pending_{false};
+  bool startup_warmup_active_{true};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
