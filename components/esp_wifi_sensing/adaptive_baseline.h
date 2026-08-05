@@ -13,6 +13,16 @@ class AdaptiveBaseline {
   void set_baseline_fall_time(uint32_t time_ms) { this->baseline_fall_time_ms_ = time_ms; }
   void set_learning_delay(uint32_t delay_ms) { this->learning_delay_ms_ = delay_ms; }
 
+  void reset() {
+    this->learning_allowed_after_ms_ = 0;
+    this->initialized_ = false;
+    this->motion_was_active_ = false;
+    this->baseline_mean_ = 0.0f;
+    this->baseline_variance_ = 0.0f;
+    this->baseline_stddev_ = 0.0f;
+    this->adaptive_threshold_ = 0.0f;
+  }
+
   void update(float value, bool motion_active, uint32_t now_ms, uint32_t interval_ms) {
     if (motion_active) {
       this->motion_was_active_ = true;

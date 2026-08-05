@@ -19,6 +19,9 @@ void GainCompensationPreprocessor::set_enabled(bool enabled) {
 
   this->enabled_ = enabled;
   this->compensated_bytes_.clear();
+  this->last_gain_status_ = -1;
+  this->ready_transition_reported_ = false;
+  this->ready_transition_ = false;
 
 #ifdef USE_ESP_WIFI_SENSING_GAIN_COMPENSATION
   if (enabled) {
@@ -48,6 +51,14 @@ void GainCompensationPreprocessor::process(
   esp_csi_gain_ctrl_get_rx_gain(input.rx_ctrl, &agc_gain, &fft_gain);
 
   rx_gain_status_t status = esp_csi_gain_ctrl_get_gain_status();
+  if (!this->ready_transition_reported_ &&
+      this->last_gain_status_ == static_cast<int>(RX_GAIN_COLLECT) &&
+      (status == RX_GAIN_READY || status == RX_GAIN_FORCE)) {
+    this->ready_transition_reported_ = true;
+    this->ready_transition_ = true;
+  }
+  this->last_gain_status_ = static_cast<int>(status);
+
   if (status == RX_GAIN_COLLECT) {
     esp_err_t err = esp_csi_gain_ctrl_record_rx_gain(agc_gain, fft_gain);
     if (err != ESP_OK) {
