@@ -188,19 +188,12 @@ void ESPWiFiSensing::loop() {
 
   if (this->new_csi_sample_) {
     const uint32_t metric = this->latest_csi_metric_;
-    const bool have_previous_before = this->have_previous_sample_;
-    const uint32_t previous_metric_before = this->previous_csi_metric_;
-    const uint32_t variation_sum_before = this->variation_sum_;
-    const uint32_t variation_samples_before = this->variation_samples_;
-    const uint32_t variation_max_before = this->variation_max_;
-    bool variation_block_entered = false;
-    uint32_t variation = 0;
 
     this->new_csi_sample_ = false;
 
     if (!this->startup_warmup_active_) {
       if (this->have_previous_sample_) {
-        variation_block_entered = true;
+        uint32_t variation;
 
         if (metric >= this->previous_csi_metric_) {
           variation = metric - this->previous_csi_metric_;
@@ -219,49 +212,6 @@ void ESPWiFiSensing::loop() {
       this->previous_csi_metric_ = metric;
       this->have_previous_sample_ = true;
     }
-
-    ESP_LOGI(
-        TAG,
-        "VAR_PIPELINE new_csi_sample=true startup_warmup_active=%s gain_compensation_ready=%s "
-        "have_previous_before=%s latest_csi_metric=%u previous_csi_metric=%u "
-        "variation_block_entered=%s variation=%u variation_sum_before=%u variation_sum_after=%u "
-        "variation_samples_before=%u variation_samples_after=%u variation_max_before=%u variation_max_after=%u "
-        "have_previous_after=%s",
-        this->startup_warmup_active_ ? "true" : "false",
-        this->gain_compensation_ready_ ? "true" : "false",
-        have_previous_before ? "true" : "false",
-        static_cast<unsigned>(metric),
-        static_cast<unsigned>(previous_metric_before),
-        variation_block_entered ? "true" : "false",
-        static_cast<unsigned>(variation),
-        static_cast<unsigned>(variation_sum_before),
-        static_cast<unsigned>(this->variation_sum_),
-        static_cast<unsigned>(variation_samples_before),
-        static_cast<unsigned>(this->variation_samples_),
-        static_cast<unsigned>(variation_max_before),
-        static_cast<unsigned>(this->variation_max_),
-        this->have_previous_sample_ ? "true" : "false"
-    );
-  } else {
-    ESP_LOGI(
-        TAG,
-        "VAR_PIPELINE new_csi_sample=false startup_warmup_active=%s gain_compensation_ready=%s "
-        "have_previous_before=%s latest_csi_metric=%u previous_csi_metric=%u variation_block_entered=false "
-        "variation=0 variation_sum_before=%u variation_sum_after=%u variation_samples_before=%u "
-        "variation_samples_after=%u variation_max_before=%u variation_max_after=%u have_previous_after=%s",
-        this->startup_warmup_active_ ? "true" : "false",
-        this->gain_compensation_ready_ ? "true" : "false",
-        this->have_previous_sample_ ? "true" : "false",
-        static_cast<unsigned>(this->latest_csi_metric_),
-        static_cast<unsigned>(this->previous_csi_metric_),
-        static_cast<unsigned>(this->variation_sum_),
-        static_cast<unsigned>(this->variation_sum_),
-        static_cast<unsigned>(this->variation_samples_),
-        static_cast<unsigned>(this->variation_samples_),
-        static_cast<unsigned>(this->variation_max_),
-        static_cast<unsigned>(this->variation_max_),
-        this->have_previous_sample_ ? "true" : "false"
-    );
   }
 
   // -------------------------------------------------------
@@ -271,7 +221,6 @@ void ESPWiFiSensing::loop() {
   const uint32_t now = millis();
 
   if (now - this->last_report_time_ < 5000) {
-    ESP_LOGI(TAG, "RETURN: report_interval_not_elapsed");
     return;
   }
 
@@ -315,7 +264,6 @@ void ESPWiFiSensing::loop() {
     this->variation_sum_ = 0;
     this->variation_max_ = 0;
     this->variation_samples_ = 0;
-    ESP_LOGI(TAG, this->gain_compensation_ready_ ? "RETURN: warmup_active" : "RETURN: gain_compensation_not_ready");
     return;
   }
 
