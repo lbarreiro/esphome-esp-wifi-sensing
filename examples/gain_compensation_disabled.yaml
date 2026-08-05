@@ -26,6 +26,11 @@ esp_wifi_sensing:
   gain_compensation: false
   threshold: 6000
   debounce: 2
+  adaptive_threshold: true
+  sigma_multiplier: 4.0
+  baseline_rise_time: 30min
+  baseline_fall_time: 30min
+  learning_delay: 60s
 
 sensor:
   - platform: esp_wifi_sensing
@@ -34,6 +39,12 @@ sensor:
       name: "CSI Metric"
     variation_avg:
       name: "CSI Variation Avg"
+    baseline_mean:
+      name: "Baseline Mean"
+    baseline_stddev:
+      name: "Baseline StdDev"
+    adaptive_threshold:
+      name: "Adaptive Threshold"
 
 
 binary_sensor:

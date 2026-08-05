@@ -244,13 +244,42 @@ void ESPWiFiSensing::loop() {
     this->variation_avg_sensor_->publish_state(average_variation);
   }
 
-  if (average_variation > this->motion_threshold_) {
+  if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
+    this->adaptive_baseline_.update(static_cast<float>(average_variation), false, now, 5000);
+  }
+
+  const float decision_threshold = this->adaptive_threshold_enabled_ ?
+      this->adaptive_baseline_.adaptive_threshold() :
+      static_cast<float>(this->motion_threshold_);
+
+  if (static_cast<float>(average_variation) > decision_threshold) {
     this->consecutive_above_threshold_++;
     this->motion_state_ =
         this->consecutive_above_threshold_ >= this->motion_debounce_;
   } else {
     this->consecutive_above_threshold_ = 0;
     this->motion_state_ = false;
+  }
+
+  if (this->adaptive_threshold_enabled_) {
+    this->adaptive_baseline_.update(
+        static_cast<float>(average_variation),
+        this->motion_state_,
+        now,
+        5000
+    );
+
+    if (this->baseline_mean_sensor_ != nullptr) {
+      this->baseline_mean_sensor_->publish_state(this->adaptive_baseline_.baseline_mean());
+    }
+
+    if (this->baseline_stddev_sensor_ != nullptr) {
+      this->baseline_stddev_sensor_->publish_state(this->adaptive_baseline_.baseline_stddev());
+    }
+
+    if (this->adaptive_threshold_sensor_ != nullptr) {
+      this->adaptive_threshold_sensor_->publish_state(this->adaptive_baseline_.adaptive_threshold());
+    }
   }
 
   if (this->motion_binary_sensor_ != nullptr) {
@@ -470,10 +499,18 @@ void ESPWiFiSensing::dump_config() {
       this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum"
   );
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Adaptive Threshold: %s", this->adaptive_threshold_enabled_ ? "enabled" : "disabled");
+  ESP_LOGCONFIG(TAG, "  Sigma multiplier: %.2f", this->sigma_multiplier_);
+  ESP_LOGCONFIG(TAG, "  Baseline rise time: %u ms", static_cast<unsigned>(this->baseline_rise_time_ms_));
+  ESP_LOGCONFIG(TAG, "  Baseline fall time: %u ms", static_cast<unsigned>(this->baseline_fall_time_ms_));
+  ESP_LOGCONFIG(TAG, "  Learning delay: %u ms", static_cast<unsigned>(this->learning_delay_ms_));
   ESP_LOGCONFIG(TAG, "  Threshold: %u", static_cast<unsigned>(this->motion_threshold_));
   ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
   LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
   LOG_SENSOR("  ", "CSI Variation Avg", this->variation_avg_sensor_);
+  LOG_SENSOR("  ", "Baseline Mean", this->baseline_mean_sensor_);
+  LOG_SENSOR("  ", "Baseline StdDev", this->baseline_stddev_sensor_);
+  LOG_SENSOR("  ", "Adaptive Threshold", this->adaptive_threshold_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }

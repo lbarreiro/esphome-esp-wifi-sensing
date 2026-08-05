@@ -15,6 +15,7 @@
 #include "csi_packet.h"
 #include "absolute_sum_algorithm.h"
 #include "variance_algorithm.h"
+#include "adaptive_baseline.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -36,6 +37,14 @@ class ESPWiFiSensing : public Component {
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
   void set_motion_threshold(uint32_t threshold) { this->motion_threshold_ = threshold; }
   void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
+  void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
+  void set_sigma_multiplier(float multiplier) { this->adaptive_baseline_.set_sigma_multiplier(multiplier); this->sigma_multiplier_ = multiplier; }
+  void set_baseline_rise_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_rise_time(time_ms); this->baseline_rise_time_ms_ = time_ms; }
+  void set_baseline_fall_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_fall_time(time_ms); this->baseline_fall_time_ms_ = time_ms; }
+  void set_learning_delay(uint32_t delay_ms) { this->adaptive_baseline_.set_learning_delay(delay_ms); this->learning_delay_ms_ = delay_ms; }
+  void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
+  void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
+  void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -73,8 +82,17 @@ class ESPWiFiSensing : public Component {
 
   sensor::Sensor *metric_sensor_{nullptr};
   sensor::Sensor *variation_avg_sensor_{nullptr};
+  sensor::Sensor *baseline_mean_sensor_{nullptr};
+  sensor::Sensor *baseline_stddev_sensor_{nullptr};
+  sensor::Sensor *adaptive_threshold_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
 
+  bool adaptive_threshold_enabled_{true};
+  float sigma_multiplier_{4.0f};
+  uint32_t baseline_rise_time_ms_{1800000};
+  uint32_t baseline_fall_time_ms_{1800000};
+  uint32_t learning_delay_ms_{60000};
+  AdaptiveBaseline adaptive_baseline_{};
   uint32_t motion_threshold_{6000};
   uint32_t motion_debounce_{2};
   uint32_t consecutive_above_threshold_{0};

@@ -6,6 +6,11 @@ CONF_ALGORITHM = "algorithm"
 CONF_GAIN_COMPENSATION = "gain_compensation"
 CONF_THRESHOLD = "threshold"
 CONF_DEBOUNCE = "debounce"
+CONF_ADAPTIVE_THRESHOLD = "adaptive_threshold"
+CONF_SIGMA_MULTIPLIER = "sigma_multiplier"
+CONF_BASELINE_RISE_TIME = "baseline_rise_time"
+CONF_BASELINE_FALL_TIME = "baseline_fall_time"
+CONF_LEARNING_DELAY = "learning_delay"
 CONF_ESP_WIFI_SENSING_ID = "esp_wifi_sensing_id"
 
 DEPENDENCIES = ["wifi"]
@@ -37,6 +42,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_GAIN_COMPENSATION, default=False): cv.boolean,
         cv.Optional(CONF_THRESHOLD, default=6000): cv.uint32_t,
         cv.Optional(CONF_DEBOUNCE, default=2): cv.positive_int,
+        cv.Optional(CONF_ADAPTIVE_THRESHOLD, default=True): cv.boolean,
+        cv.Optional(CONF_SIGMA_MULTIPLIER, default=4.0): cv.positive_float,
+        cv.Optional(CONF_BASELINE_RISE_TIME, default="30min"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_BASELINE_FALL_TIME, default="30min"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_LEARNING_DELAY, default="60s"): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -48,5 +58,10 @@ async def to_code(config):
     cg.add(var.set_gain_compensation_enabled(config[CONF_GAIN_COMPENSATION]))
     cg.add(var.set_motion_threshold(config[CONF_THRESHOLD]))
     cg.add(var.set_motion_debounce(config[CONF_DEBOUNCE]))
+    cg.add(var.set_adaptive_threshold_enabled(config[CONF_ADAPTIVE_THRESHOLD]))
+    cg.add(var.set_sigma_multiplier(config[CONF_SIGMA_MULTIPLIER]))
+    cg.add(var.set_baseline_rise_time(config[CONF_BASELINE_RISE_TIME].total_milliseconds))
+    cg.add(var.set_baseline_fall_time(config[CONF_BASELINE_FALL_TIME].total_milliseconds))
+    cg.add(var.set_learning_delay(config[CONF_LEARNING_DELAY].total_milliseconds))
     if config[CONF_GAIN_COMPENSATION]:
         cg.add_define("USE_ESP_WIFI_SENSING_GAIN_COMPENSATION")
