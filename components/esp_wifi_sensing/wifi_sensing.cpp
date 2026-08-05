@@ -180,7 +180,8 @@ void ESPWiFiSensing::loop() {
     this->variation_max_ = 0;
     this->variation_samples_ = 0;
 
-    if (this->gain_compensation_ready_) {
+    const bool warmup_ready = !this->gain_compensation_enabled_ || this->gain_compensation_ready_;
+    if (warmup_ready) {
       this->startup_warmup_active_ = false;
       this->last_report_time_ = millis();
     }
