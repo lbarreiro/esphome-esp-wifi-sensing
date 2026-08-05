@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "esphome/core/log.h"
+
 namespace esphome {
 namespace esp_wifi_sensing {
 
@@ -24,9 +26,24 @@ class AdaptiveBaseline {
   }
 
   void update(float value, bool motion_active, uint32_t now_ms, uint32_t interval_ms) {
+    this->update_call_count_++;
+
+    const float baseline_mean_before = this->baseline_mean_;
+    const float baseline_stddev_before = this->baseline_stddev_;
+    const float adaptive_threshold_before = this->adaptive_threshold_;
+
     if (motion_active) {
       this->motion_was_active_ = true;
       this->learning_allowed_after_ms_ = now_ms + this->learning_delay_ms_;
+      this->log_update_(
+          value,
+          motion_active,
+          baseline_mean_before,
+          baseline_stddev_before,
+          adaptive_threshold_before,
+          true,
+          "motion_active"
+      );
       return;
     }
 
@@ -36,6 +53,15 @@ class AdaptiveBaseline {
     }
 
     if (now_ms < this->learning_allowed_after_ms_) {
+      this->log_update_(
+          value,
+          motion_active,
+          baseline_mean_before,
+          baseline_stddev_before,
+          adaptive_threshold_before,
+          true,
+          "learning_delay"
+      );
       return;
     }
 
@@ -45,6 +71,15 @@ class AdaptiveBaseline {
       this->baseline_stddev_ = 0.0f;
       this->adaptive_threshold_ = value;
       this->initialized_ = true;
+      this->log_update_(
+          value,
+          motion_active,
+          baseline_mean_before,
+          baseline_stddev_before,
+          adaptive_threshold_before,
+          false,
+          "normal_update"
+      );
       return;
     }
 
@@ -61,6 +96,15 @@ class AdaptiveBaseline {
     }
     this->baseline_stddev_ = std::sqrt(this->baseline_variance_);
     this->adaptive_threshold_ = this->baseline_mean_ + this->sigma_multiplier_ * this->baseline_stddev_;
+    this->log_update_(
+        value,
+        motion_active,
+        baseline_mean_before,
+        baseline_stddev_before,
+        adaptive_threshold_before,
+        false,
+        "normal_update"
+    );
   }
 
   float baseline_mean() const { return this->baseline_mean_; }
@@ -76,6 +120,36 @@ class AdaptiveBaseline {
     return 1.0f - std::exp(-static_cast<float>(interval_ms) / static_cast<float>(time_constant_ms));
   }
 
+  void log_update_(
+      float average_variation,
+      bool motion_state,
+      float baseline_mean_before,
+      float baseline_stddev_before,
+      float adaptive_threshold_before,
+      bool exited_early,
+      const char *early_exit_reason
+  ) const {
+    ESP_LOGI(
+        "esp_wifi_sensing::adaptive_baseline",
+        "update call=%u startup_call=%s average_variation=%.2f baseline_mean_before=%.2f baseline_mean_after=%.2f "
+        "baseline_stddev_before=%.2f baseline_stddev_after=%.2f adaptive_threshold_before=%.2f "
+        "adaptive_threshold_after=%.2f motion_state=%s learning_allowed_after_ms=%u exited_early=%s reason=%s",
+        static_cast<unsigned>(this->update_call_count_),
+        this->update_call_count_ <= 10 ? "true" : "false",
+        average_variation,
+        baseline_mean_before,
+        this->baseline_mean_,
+        baseline_stddev_before,
+        this->baseline_stddev_,
+        adaptive_threshold_before,
+        this->adaptive_threshold_,
+        motion_state ? "ON" : "OFF",
+        static_cast<unsigned>(this->learning_allowed_after_ms_),
+        exited_early ? "true" : "false",
+        early_exit_reason
+    );
+  }
+
   float sigma_multiplier_{4.0f};
   uint32_t baseline_rise_time_ms_{1800000};
   uint32_t baseline_fall_time_ms_{1800000};
@@ -87,6 +161,7 @@ class AdaptiveBaseline {
   float baseline_variance_{0.0f};
   float baseline_stddev_{0.0f};
   float adaptive_threshold_{0.0f};
+  uint32_t update_call_count_{0};
 };
 
 }  // namespace esp_wifi_sensing
