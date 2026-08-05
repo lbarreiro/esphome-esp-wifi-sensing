@@ -172,45 +172,37 @@ void ESPWiFiSensing::loop() {
   // 3. Processar nova métrica CSI
   // -------------------------------------------------------
 
-  if (this->adaptive_baseline_reset_pending_) {
-    this->adaptive_baseline_reset_pending_ = false;
-
-    if (this->adaptive_threshold_enabled_) {
-      this->adaptive_baseline_.reset();
-      this->previous_csi_metric_ = this->latest_csi_metric_;
-      this->have_previous_sample_ = true;
-      this->variation_sum_ = 0;
-      this->variation_max_ = 0;
-      this->variation_samples_ = 0;
-      this->consecutive_above_threshold_ = 0;
-      this->motion_state_ = false;
-    }
-  }
-
   if (this->new_csi_sample_) {
     const uint32_t metric = this->latest_csi_metric_;
 
     this->new_csi_sample_ = false;
 
-    if (this->have_previous_sample_) {
-      uint32_t variation;
+    if (this->pipeline_.gain_compensation_ready()) {
+      if (this->have_previous_sample_) {
+        uint32_t variation;
 
-      if (metric >= this->previous_csi_metric_) {
-        variation = metric - this->previous_csi_metric_;
-      } else {
-        variation = this->previous_csi_metric_ - metric;
+        if (metric >= this->previous_csi_metric_) {
+          variation = metric - this->previous_csi_metric_;
+        } else {
+          variation = this->previous_csi_metric_ - metric;
+        }
+
+        this->variation_sum_ += variation;
+        this->variation_samples_++;
+
+        if (variation > this->variation_max_) {
+          this->variation_max_ = variation;
+        }
       }
 
-      this->variation_sum_ += variation;
-      this->variation_samples_++;
-
-      if (variation > this->variation_max_) {
-        this->variation_max_ = variation;
-      }
+      this->previous_csi_metric_ = metric;
+      this->have_previous_sample_ = true;
+    } else {
+      this->have_previous_sample_ = false;
+      this->variation_sum_ = 0;
+      this->variation_max_ = 0;
+      this->variation_samples_ = 0;
     }
-
-    this->previous_csi_metric_ = metric;
-    this->have_previous_sample_ = true;
   }
 
   // -------------------------------------------------------
@@ -257,6 +249,13 @@ void ESPWiFiSensing::loop() {
 
   if (this->variation_avg_sensor_ != nullptr) {
     this->variation_avg_sensor_->publish_state(average_variation);
+  }
+
+  if (!this->pipeline_.gain_compensation_ready()) {
+    this->variation_sum_ = 0;
+    this->variation_max_ = 0;
+    this->variation_samples_ = 0;
+    return;
   }
 
   if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
@@ -480,9 +479,6 @@ void ESPWiFiSensing::csi_callback_(
   packet.first_word_invalid = data->first_word_invalid;
 
   self->pipeline_.process_packet(packet);
-  if (self->pipeline_.consume_gain_compensation_ready_transition()) {
-    self->adaptive_baseline_reset_pending_ = true;
-  }
 
   const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 

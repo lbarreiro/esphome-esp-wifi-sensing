@@ -97,7 +97,6 @@ class ESPWiFiSensing : public Component {
   uint32_t motion_debounce_{2};
   uint32_t consecutive_above_threshold_{0};
   bool motion_state_{false};
-  volatile bool adaptive_baseline_reset_pending_{false};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
