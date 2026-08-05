@@ -129,6 +129,7 @@ static const char *const TAG = "esp_wifi_sensing";
 void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
   this->gain_compensation_enabled_ = enabled;
   this->pipeline_.set_gain_compensation_enabled(enabled);
+  this->gain_compensation_ready_ = this->pipeline_.gain_compensation_ready();
 }
 
 
@@ -136,6 +137,7 @@ void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
   this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
+  this->gain_compensation_ready_ = this->pipeline_.gain_compensation_ready();
 }
 
 
@@ -178,7 +180,7 @@ void ESPWiFiSensing::loop() {
     this->variation_max_ = 0;
     this->variation_samples_ = 0;
 
-    if (this->pipeline_.gain_compensation_ready()) {
+    if (this->gain_compensation_ready_) {
       this->startup_warmup_active_ = false;
       this->last_report_time_ = millis();
     }
@@ -486,6 +488,7 @@ void ESPWiFiSensing::csi_callback_(
   packet.first_word_invalid = data->first_word_invalid;
 
   self->pipeline_.process_packet(packet);
+  self->gain_compensation_ready_ = self->pipeline_.gain_compensation_ready();
 
   const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 

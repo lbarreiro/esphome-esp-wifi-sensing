@@ -98,6 +98,7 @@ class ESPWiFiSensing : public Component {
   uint32_t consecutive_above_threshold_{0};
   bool motion_state_{false};
   bool startup_warmup_active_{true};
+  volatile bool gain_compensation_ready_{true};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
