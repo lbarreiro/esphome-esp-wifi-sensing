@@ -11,6 +11,8 @@ CONF_SIGMA_MULTIPLIER = "sigma_multiplier"
 CONF_BASELINE_RISE_TIME = "baseline_rise_time"
 CONF_BASELINE_FALL_TIME = "baseline_fall_time"
 CONF_LEARNING_DELAY = "learning_delay"
+CONF_WARMUP_TIME = "warmup_time"
+CONF_MOTION_HOLD_TIME = "motion_hold_time"
 CONF_ESP_WIFI_SENSING_ID = "esp_wifi_sensing_id"
 
 DEPENDENCIES = ["wifi"]
@@ -47,6 +49,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BASELINE_RISE_TIME, default="30min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BASELINE_FALL_TIME, default="30min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_LEARNING_DELAY, default="60s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_WARMUP_TIME, default="0s"): cv.time_period_milliseconds,
+        cv.Optional(CONF_MOTION_HOLD_TIME, default="0s"): cv.time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -63,5 +67,7 @@ async def to_code(config):
     cg.add(var.set_baseline_rise_time(config[CONF_BASELINE_RISE_TIME].total_milliseconds))
     cg.add(var.set_baseline_fall_time(config[CONF_BASELINE_FALL_TIME].total_milliseconds))
     cg.add(var.set_learning_delay(config[CONF_LEARNING_DELAY].total_milliseconds))
+    cg.add(var.set_warmup_time(config[CONF_WARMUP_TIME].total_milliseconds))
+    cg.add(var.set_motion_hold_time(config[CONF_MOTION_HOLD_TIME].total_milliseconds))
     if config[CONF_GAIN_COMPENSATION]:
         cg.add_define("USE_ESP_WIFI_SENSING_GAIN_COMPENSATION")

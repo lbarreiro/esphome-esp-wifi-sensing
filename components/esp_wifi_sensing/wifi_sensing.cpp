@@ -244,6 +244,33 @@ void ESPWiFiSensing::loop() {
     this->variation_avg_sensor_->publish_state(average_variation);
   }
 
+  if (this->warmup_active_(now)) {
+    const uint32_t elapsed_ms = now < this->warmup_time_ms_ ? now : this->warmup_time_ms_;
+    ESP_LOGI(
+        TAG,
+        "Adaptive baseline warm-up (%u/%u s)",
+        static_cast<unsigned>(elapsed_ms / 1000),
+        static_cast<unsigned>(this->warmup_time_ms_ / 1000)
+    );
+
+    this->consecutive_above_threshold_ = 0;
+    this->motion_state_ = false;
+
+    if (this->motion_binary_sensor_ != nullptr) {
+      this->motion_binary_sensor_->publish_state(false);
+    }
+
+    this->variation_sum_ = 0;
+    this->variation_max_ = 0;
+    this->variation_samples_ = 0;
+    return;
+  }
+
+  if (this->warmup_time_ms_ > 0 && !this->warmup_complete_logged_) {
+    ESP_LOGI(TAG, "Adaptive baseline warm-up complete");
+    this->warmup_complete_logged_ = true;
+  }
+
   if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
     this->adaptive_baseline_.update(static_cast<float>(average_variation), false, now, 5000);
   }
@@ -252,19 +279,20 @@ void ESPWiFiSensing::loop() {
       this->adaptive_baseline_.adaptive_threshold() :
       static_cast<float>(this->motion_threshold_);
 
+  bool motion_detected = false;
+
   if (static_cast<float>(average_variation) > decision_threshold) {
     this->consecutive_above_threshold_++;
-    this->motion_state_ =
-        this->consecutive_above_threshold_ >= this->motion_debounce_;
+    motion_detected = this->consecutive_above_threshold_ >= this->motion_debounce_;
   } else {
     this->consecutive_above_threshold_ = 0;
-    this->motion_state_ = false;
+    motion_detected = false;
   }
 
   if (this->adaptive_threshold_enabled_) {
     this->adaptive_baseline_.update(
         static_cast<float>(average_variation),
-        this->motion_state_,
+        motion_detected,
         now,
         5000
     );
@@ -282,6 +310,8 @@ void ESPWiFiSensing::loop() {
     }
   }
 
+  this->motion_state_ = this->apply_motion_hold_(motion_detected, now);
+
   if (this->motion_binary_sensor_ != nullptr) {
     this->motion_binary_sensor_->publish_state(this->motion_state_);
   }
@@ -292,6 +322,24 @@ void ESPWiFiSensing::loop() {
   this->variation_samples_ = 0;
 }
 
+
+bool ESPWiFiSensing::warmup_active_(uint32_t now) const {
+  return this->warmup_time_ms_ > 0 && now < this->warmup_time_ms_;
+}
+
+
+bool ESPWiFiSensing::apply_motion_hold_(bool motion_detected, uint32_t now) {
+  if (motion_detected) {
+    this->last_motion_time_ = now;
+    return true;
+  }
+
+  if (this->motion_hold_time_ms_ == 0 || !this->motion_state_) {
+    return false;
+  }
+
+  return now - this->last_motion_time_ < this->motion_hold_time_ms_;
+}
 
 bool ESPWiFiSensing::start_csi_() {
   wifi_ap_record_t ap_info{};
@@ -504,6 +552,8 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Baseline rise time: %u ms", static_cast<unsigned>(this->baseline_rise_time_ms_));
   ESP_LOGCONFIG(TAG, "  Baseline fall time: %u ms", static_cast<unsigned>(this->baseline_fall_time_ms_));
   ESP_LOGCONFIG(TAG, "  Learning delay: %u ms", static_cast<unsigned>(this->learning_delay_ms_));
+  ESP_LOGCONFIG(TAG, "  Warm-up time: %u ms", static_cast<unsigned>(this->warmup_time_ms_));
+  ESP_LOGCONFIG(TAG, "  Motion hold time: %u ms", static_cast<unsigned>(this->motion_hold_time_ms_));
   ESP_LOGCONFIG(TAG, "  Threshold: %u", static_cast<unsigned>(this->motion_threshold_));
   ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
   LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);

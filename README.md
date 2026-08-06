@@ -21,7 +21,13 @@ esp_wifi_sensing:
   baseline_rise_time: 30min
   baseline_fall_time: 30min
   learning_delay: 60s
+  warmup_time: 60s
+  motion_hold_time: 60s
 ```
+
+`warmup_time` is optional and defaults to `0s`. During warm-up, CSI metrics and diagnostic sensors continue to update every 5 seconds, but adaptive baseline learning, threshold updates, and motion detection are skipped until the boot-time interval has elapsed.
+
+`motion_hold_time` is optional and defaults to `0s`. When enabled, motion still turns on immediately after the existing detection logic reports motion, but the binary sensor remains on until the configured interval has elapsed without any new motion detection.
 
 The adaptive threshold is calculated from the existing 5-second `variation_avg` statistics window:
 
@@ -86,7 +92,7 @@ All diagnostic sensors are published when the component updates its existing 5-s
 
 ## Optional motion binary sensor
 
-The motion binary sensor uses the existing `variation_avg` value from each 5-second statistics window. With adaptive thresholding enabled, motion turns on after `variation_avg` is above the adaptive threshold for `debounce` consecutive reports, and turns off immediately when `variation_avg` is less than or equal to the adaptive threshold. With adaptive thresholding disabled, the same behavior uses the fixed `threshold` value instead.
+The motion binary sensor uses the existing `variation_avg` value from each 5-second statistics window. With adaptive thresholding enabled, motion turns on after `variation_avg` is above the adaptive threshold for `debounce` consecutive reports, and turns off after `motion_hold_time` has elapsed without a new motion detection when `variation_avg` is less than or equal to the adaptive threshold. With adaptive thresholding disabled, the same behavior uses the fixed `threshold` value instead.
 
 ```yaml
 binary_sensor:
