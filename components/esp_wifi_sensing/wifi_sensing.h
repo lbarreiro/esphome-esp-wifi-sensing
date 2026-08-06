@@ -42,6 +42,8 @@ class ESPWiFiSensing : public Component {
   void set_baseline_rise_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_rise_time(time_ms); this->baseline_rise_time_ms_ = time_ms; }
   void set_baseline_fall_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_fall_time(time_ms); this->baseline_fall_time_ms_ = time_ms; }
   void set_learning_delay(uint32_t delay_ms) { this->adaptive_baseline_.set_learning_delay(delay_ms); this->learning_delay_ms_ = delay_ms; }
+  void set_warmup_time(uint32_t time_ms) { this->warmup_time_ms_ = time_ms; }
+  void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms; }
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
   void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
@@ -54,6 +56,8 @@ class ESPWiFiSensing : public Component {
 
   bool start_csi_();
   bool start_ping_();
+  bool warmup_active_(uint32_t now) const;
+  bool apply_motion_hold_(bool motion_detected, uint32_t now);
 
   // CSI
   volatile uint32_t csi_packet_count_{0};
@@ -92,11 +96,15 @@ class ESPWiFiSensing : public Component {
   uint32_t baseline_rise_time_ms_{1800000};
   uint32_t baseline_fall_time_ms_{1800000};
   uint32_t learning_delay_ms_{60000};
+  uint32_t warmup_time_ms_{0};
+  bool warmup_complete_logged_{false};
   AdaptiveBaseline adaptive_baseline_{};
   uint32_t motion_threshold_{6000};
   uint32_t motion_debounce_{2};
   uint32_t consecutive_above_threshold_{0};
   bool motion_state_{false};
+  uint32_t motion_hold_time_ms_{0};
+  uint32_t last_motion_time_{0};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
