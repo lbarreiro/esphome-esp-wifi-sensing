@@ -49,8 +49,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BASELINE_RISE_TIME, default="30min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BASELINE_FALL_TIME, default="30min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_LEARNING_DELAY, default="60s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_WARMUP_TIME, default="0s"): cv.time_period_milliseconds,
-        cv.Optional(CONF_MOTION_HOLD_TIME, default="0s"): cv.time_period_milliseconds,
+        cv.Optional(CONF_WARMUP_TIME, default="0s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_MOTION_HOLD_TIME, default="0s"): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
