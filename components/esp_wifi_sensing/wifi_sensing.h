@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
@@ -44,6 +45,8 @@ class ESPWiFiSensing : public Component {
   void set_learning_delay(uint32_t delay_ms) { this->adaptive_baseline_.set_learning_delay(delay_ms); this->learning_delay_ms_ = delay_ms; }
   void set_warmup_time(uint32_t time_ms) { this->warmup_time_ms_ = time_ms; }
   void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms; }
+  void set_statistics_window(uint32_t time_ms) { this->statistics_window_ms_ = time_ms; }
+  void set_statistics_update(uint32_t time_ms) { this->statistics_update_ms_ = time_ms; }
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
   void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
@@ -58,6 +61,8 @@ class ESPWiFiSensing : public Component {
   bool start_ping_();
   bool warmup_active_(uint32_t now) const;
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
+  void add_variation_sample_(uint32_t variation, uint32_t now);
+  void prune_variation_samples_(uint32_t now);
 
   // CSI
   volatile uint32_t csi_packet_count_{0};
@@ -72,9 +77,19 @@ class ESPWiFiSensing : public Component {
   bool have_previous_sample_{false};
 
   // Estatísticas para o relatório.
+  struct VariationSample {
+    uint32_t value{0};
+    uint32_t timestamp{0};
+  };
+
+  std::vector<VariationSample> variation_window_{};
+  uint32_t variation_window_next_{0};
+  uint32_t variation_window_count_{0};
   uint32_t variation_sum_{0};
   uint32_t variation_max_{0};
-  uint32_t variation_samples_{0};
+  bool variation_max_dirty_{false};
+  uint32_t statistics_window_ms_{5000};
+  uint32_t statistics_update_ms_{1000};
 
   uint32_t last_reported_count_{0};
   uint32_t last_report_time_{0};
