@@ -284,21 +284,19 @@ void ESPWiFiSensing::loop() {
   bool motion_detected = false;
 
   const bool above_threshold = static_cast<float>(average_variation) > decision_threshold;
+  const uint32_t accepted_threshold_crossings = this->evaluate_transient_pulse_candidate_(
+      above_threshold,
+      average_variation,
+      decision_threshold
+  );
 
-  if (above_threshold) {
-    this->consecutive_above_threshold_++;
+  if (accepted_threshold_crossings > 0) {
+    this->consecutive_above_threshold_ += accepted_threshold_crossings;
     motion_detected = this->consecutive_above_threshold_ >= this->motion_debounce_;
   } else {
     this->consecutive_above_threshold_ = 0;
     motion_detected = false;
   }
-
-  motion_detected = this->apply_transient_pulse_rejection_(
-      motion_detected,
-      above_threshold,
-      average_variation,
-      decision_threshold
-  );
 
   if (this->adaptive_threshold_enabled_) {
     this->adaptive_baseline_.update(
@@ -407,10 +405,10 @@ void ESPWiFiSensing::prune_variation_samples_(uint32_t now) {
 }
 
 
-bool ESPWiFiSensing::apply_transient_pulse_rejection_(
-    bool motion_detected, bool above_threshold, uint32_t average_variation, float decision_threshold) {
+uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
+    bool above_threshold, uint32_t average_variation, float decision_threshold) {
   if (decision_threshold <= 0.0f) {
-    return motion_detected;
+    return above_threshold ? 1 : 0;
   }
 
   if (above_threshold) {
@@ -423,16 +421,18 @@ bool ESPWiFiSensing::apply_transient_pulse_rejection_(
     if (excess > this->transient_pulse_test_.peak) {
       this->transient_pulse_test_.peak = excess;
     }
-    return false;
+    return 0;
   }
 
   if (!this->transient_pulse_test_.active) {
-    return motion_detected;
+    return 0;
   }
 
   const float peak = this->transient_pulse_test_.peak;
   const float area = this->transient_pulse_test_.area;
   const float equivalent_width = peak > 0.0f ? area / peak : 0.0f;
+  const uint32_t accepted_crossings =
+      this->transient_pulse_test_.elapsed_ms / this->statistics_update_ms_;
   const bool pass = equivalent_width >= 3.4f;
 
   ESP_LOGI(
@@ -444,8 +444,12 @@ bool ESPWiFiSensing::apply_transient_pulse_rejection_(
       pass ? "PASS" : "REJECT"
   );
 
+  if (!pass) {
+    ESP_LOGI(TAG, "Transient pulse REJECTED before motion decision");
+  }
+
   this->reset_transient_pulse_test_();
-  return pass;
+  return pass ? accepted_crossings : 0;
 }
 
 
