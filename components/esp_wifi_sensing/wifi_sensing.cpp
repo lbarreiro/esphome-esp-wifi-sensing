@@ -27,10 +27,10 @@ namespace esphome {
  *      * Retries every 1000ms if initialization fails
  *    - Phase 3: Process incoming CSI samples
  *      * Calculates variation metrics between consecutive samples
- *      * Accumulates statistics (sum, max, count)
+ *      * Maintains rolling statistics (sum, max, count)
  *    - Phase 4: Report statistics window
- *      * Publishes aggregated metrics every 5 seconds
- *      * Resets variation accumulators after reporting
+ *      * Publishes aggregated metrics at the configured update interval
+ *      * Keeps the configured history in a sliding window
  * 
  * CSI ACQUISITION FLOW:
  * ====================
@@ -186,12 +186,7 @@ void ESPWiFiSensing::loop() {
         variation = this->previous_csi_metric_ - metric;
       }
 
-      this->variation_sum_ += variation;
-      this->variation_samples_++;
-
-      if (variation > this->variation_max_) {
-        this->variation_max_ = variation;
-      }
+      this->add_variation_sample_(variation, millis());
     }
 
     this->previous_csi_metric_ = metric;
@@ -199,12 +194,12 @@ void ESPWiFiSensing::loop() {
   }
 
   // -------------------------------------------------------
-  // 4. Relatório a cada 5 segundos
+  // 4. Relatório periódico com janela estatística deslizante
   // -------------------------------------------------------
 
   const uint32_t now = millis();
 
-  if (now - this->last_report_time_ < 5000) {
+  if (now - this->last_report_time_ < this->statistics_update_ms_) {
     return;
   }
 
@@ -220,20 +215,24 @@ void ESPWiFiSensing::loop() {
 
   uint32_t average_variation = 0;
 
-  if (this->variation_samples_ > 0) {
+  this->prune_variation_samples_(now);
+
+  if (this->variation_window_count_ > 0) {
     average_variation =
         this->variation_sum_ /
-        this->variation_samples_;
+        this->variation_window_count_;
   }
 
   ESP_LOGI(
       TAG,
-      "CSI: packets=%u/5s len=%u metric=%u variation avg=%u max=%u",
+      "CSI: packets=%u/%us len=%u metric=%u variation avg=%u max=%u samples=%u",
       static_cast<unsigned>(received),
+      static_cast<unsigned>(this->statistics_update_ms_ / 1000),
       static_cast<unsigned>(this->latest_csi_len_),
       static_cast<unsigned>(this->latest_csi_metric_),
       static_cast<unsigned>(average_variation),
-      static_cast<unsigned>(this->variation_max_)
+      static_cast<unsigned>(this->variation_max_),
+      static_cast<unsigned>(this->variation_window_count_)
   );
 
   if (this->metric_sensor_ != nullptr) {
@@ -260,9 +259,6 @@ void ESPWiFiSensing::loop() {
       this->motion_binary_sensor_->publish_state(false);
     }
 
-    this->variation_sum_ = 0;
-    this->variation_max_ = 0;
-    this->variation_samples_ = 0;
     return;
   }
 
@@ -272,7 +268,12 @@ void ESPWiFiSensing::loop() {
   }
 
   if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
-    this->adaptive_baseline_.update(static_cast<float>(average_variation), false, now, 5000);
+    this->adaptive_baseline_.update(
+        static_cast<float>(average_variation),
+        false,
+        now,
+        this->statistics_update_ms_
+    );
   }
 
   const float decision_threshold = this->adaptive_threshold_enabled_ ?
@@ -294,7 +295,7 @@ void ESPWiFiSensing::loop() {
         static_cast<float>(average_variation),
         motion_detected,
         now,
-        5000
+        this->statistics_update_ms_
     );
 
     if (this->baseline_mean_sensor_ != nullptr) {
@@ -316,10 +317,83 @@ void ESPWiFiSensing::loop() {
     this->motion_binary_sensor_->publish_state(this->motion_state_);
   }
 
-  // Começar uma nova janela estatística.
-  this->variation_sum_ = 0;
-  this->variation_max_ = 0;
-  this->variation_samples_ = 0;
+}
+
+
+void ESPWiFiSensing::add_variation_sample_(uint32_t variation, uint32_t now) {
+  if (this->variation_window_.empty()) {
+    const uint32_t expected_samples = (this->statistics_window_ms_ / 100) + 2;
+    const uint32_t capacity = expected_samples < 8 ? 8 : expected_samples;
+    this->variation_window_.resize(capacity);
+  }
+
+  if (this->variation_window_count_ == this->variation_window_.size()) {
+    const VariationSample &oldest =
+        this->variation_window_[this->variation_window_next_];
+    this->variation_sum_ -= oldest.value;
+    if (oldest.value == this->variation_max_) {
+      this->variation_max_dirty_ = true;
+    }
+  } else {
+    this->variation_window_count_++;
+  }
+
+  this->variation_window_[this->variation_window_next_] =
+      VariationSample{variation, now};
+  this->variation_window_next_ =
+      (this->variation_window_next_ + 1) % this->variation_window_.size();
+  this->variation_sum_ += variation;
+
+  if (!this->variation_max_dirty_ && variation > this->variation_max_) {
+    this->variation_max_ = variation;
+  }
+
+  this->prune_variation_samples_(now);
+}
+
+
+void ESPWiFiSensing::prune_variation_samples_(uint32_t now) {
+  if (this->variation_window_.empty()) {
+    return;
+  }
+
+  while (this->variation_window_count_ > 0) {
+    const uint32_t oldest_index =
+        (this->variation_window_next_ + this->variation_window_.size() -
+         this->variation_window_count_) % this->variation_window_.size();
+    const VariationSample &oldest = this->variation_window_[oldest_index];
+
+    if (now - oldest.timestamp <= this->statistics_window_ms_) {
+      break;
+    }
+
+    this->variation_sum_ -= oldest.value;
+    if (oldest.value == this->variation_max_) {
+      this->variation_max_dirty_ = true;
+    }
+    this->variation_window_count_--;
+  }
+
+  if (this->variation_window_count_ == 0) {
+    this->variation_sum_ = 0;
+    this->variation_max_ = 0;
+    this->variation_max_dirty_ = false;
+    return;
+  }
+
+  if (this->variation_max_dirty_) {
+    uint32_t max_value = 0;
+    for (uint32_t i = 0; i < this->variation_window_count_; i++) {
+      const uint32_t index =
+          (this->variation_window_next_ + this->variation_window_.size() -
+           this->variation_window_count_ + i) % this->variation_window_.size();
+      if (this->variation_window_[index].value > max_value) {
+        max_value = this->variation_window_[index].value;
+      }
+    }
+    this->variation_max_ = max_value;
+    this->variation_max_dirty_ = false;
+  }
 }
 
 
@@ -554,6 +628,8 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Learning delay: %u ms", static_cast<unsigned>(this->learning_delay_ms_));
   ESP_LOGCONFIG(TAG, "  Warm-up time: %u ms", static_cast<unsigned>(this->warmup_time_ms_));
   ESP_LOGCONFIG(TAG, "  Motion hold time: %u ms", static_cast<unsigned>(this->motion_hold_time_ms_));
+  ESP_LOGCONFIG(TAG, "  Statistics window: %u ms", static_cast<unsigned>(this->statistics_window_ms_));
+  ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
   ESP_LOGCONFIG(TAG, "  Threshold: %u", static_cast<unsigned>(this->motion_threshold_));
   ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
   LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
