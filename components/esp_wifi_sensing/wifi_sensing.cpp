@@ -460,11 +460,14 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
   const float duration_seconds =
       static_cast<float>(event_duration_ms > 0 ?
           event_duration_ms : this->transient_pulse_test_.elapsed_ms) / 1000.0f;
-  const float threshold_rise_rate = duration_seconds > 0.0f ?
+  const bool duration_valid = duration_seconds > 0.0f;
+  const float threshold_rise_rate = duration_valid ?
       (decision_threshold - this->transient_pulse_test_.threshold_start) / duration_seconds : 0.0f;
   const bool baseline_rise_reject = transient_pass && delta_ratio >= 0.07f &&
       threshold_rise_rate >= 25.0f;
-  const bool pass = transient_pass && !baseline_rise_reject;
+  const bool slow_threshold_rise_reject =
+      transient_pass && !baseline_rise_reject && duration_valid && threshold_rise_rate < 40.0f;
+  const bool pass = transient_pass && !baseline_rise_reject && !slow_threshold_rise_reject;
 
   if (transient_pass) {
     ESP_LOGI(
@@ -480,7 +483,25 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
         decision_threshold,
         threshold_rise_rate,
         duration_seconds,
-        pass ? "PASS" : "REJECT"
+        baseline_rise_reject ? "REJECT" : "PASS"
+    );
+  }
+
+  if (transient_pass && !baseline_rise_reject) {
+    ESP_LOGI(
+        TAG,
+        "Slow-threshold-rise test: W_eq=%.3f delta_R=%.3f threshold_start=%.3f "
+        "threshold_end=%.3f threshold_rise_rate=%.3f duration=%.3f "
+        "Filter1=PASS Filter2=PASS Filter3=%s final=%s%s",
+        equivalent_width,
+        delta_ratio,
+        this->transient_pulse_test_.threshold_start,
+        decision_threshold,
+        threshold_rise_rate,
+        duration_seconds,
+        slow_threshold_rise_reject ? "REJECT" : "PASS",
+        pass ? "PASS" : "REJECT",
+        slow_threshold_rise_reject ? " reason=slow-threshold-rise" : ""
     );
   }
 
