@@ -50,6 +50,7 @@ class ESPWiFiSensing : public Component {
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
   void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
+  void set_rejected_peak_sensor(sensor::Sensor *sensor) { this->rejected_peak_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -61,6 +62,8 @@ class ESPWiFiSensing : public Component {
   bool start_ping_();
   bool warmup_active_(uint32_t now) const;
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
+  uint32_t evaluate_transient_pulse_candidate_(bool above_threshold, uint32_t average_variation, float decision_threshold, uint32_t now);
+  void reset_transient_pulse_test_();
   void add_variation_sample_(uint32_t variation, uint32_t now);
   void prune_variation_samples_(uint32_t now);
 
@@ -104,6 +107,7 @@ class ESPWiFiSensing : public Component {
   sensor::Sensor *baseline_mean_sensor_{nullptr};
   sensor::Sensor *baseline_stddev_sensor_{nullptr};
   sensor::Sensor *adaptive_threshold_sensor_{nullptr};
+  sensor::Sensor *rejected_peak_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
 
   bool adaptive_threshold_enabled_{true};
@@ -120,6 +124,18 @@ class ESPWiFiSensing : public Component {
   bool motion_state_{false};
   uint32_t motion_hold_time_ms_{0};
   uint32_t last_motion_time_{0};
+
+  struct TransientPulseTestState {
+    bool active{false};
+    float area{0.0f};
+    float peak{0.0f};
+    uint32_t elapsed_ms{0};
+    float ratio_start{0.0f};
+    float threshold_start{0.0f};
+    uint32_t start_time{0};
+  };
+
+  TransientPulseTestState transient_pulse_test_{};
 
   esp_ping_handle_t ping_handle_{nullptr};
 
