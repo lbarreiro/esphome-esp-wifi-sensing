@@ -50,6 +50,7 @@ class ESPWiFiSensing : public Component {
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
   void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
+  void set_rejected_peak_sensor(sensor::Sensor *sensor) { this->rejected_peak_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -106,6 +107,7 @@ class ESPWiFiSensing : public Component {
   sensor::Sensor *baseline_mean_sensor_{nullptr};
   sensor::Sensor *baseline_stddev_sensor_{nullptr};
   sensor::Sensor *adaptive_threshold_sensor_{nullptr};
+  sensor::Sensor *rejected_peak_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
 
   bool adaptive_threshold_enabled_{true};

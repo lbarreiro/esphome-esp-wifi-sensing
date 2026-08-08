@@ -446,6 +446,9 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
 
   if (!pass) {
     ESP_LOGI(TAG, "Transient pulse REJECTED before motion decision");
+    if (this->rejected_peak_sensor_ != nullptr) {
+      this->rejected_peak_sensor_->publish_state(equivalent_width);
+    }
   }
 
   this->reset_transient_pulse_test_();
@@ -698,6 +701,7 @@ void ESPWiFiSensing::dump_config() {
   LOG_SENSOR("  ", "Baseline Mean", this->baseline_mean_sensor_);
   LOG_SENSOR("  ", "Baseline StdDev", this->baseline_stddev_sensor_);
   LOG_SENSOR("  ", "Adaptive Threshold", this->adaptive_threshold_sensor_);
+  LOG_SENSOR("  ", "Rejected Peak", this->rejected_peak_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
