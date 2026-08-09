@@ -287,8 +287,7 @@ void ESPWiFiSensing::loop() {
   const uint32_t accepted_threshold_crossings = this->evaluate_transient_pulse_candidate_(
       above_threshold,
       average_variation,
-      decision_threshold,
-      now
+      decision_threshold
   );
 
   if (accepted_threshold_crossings > 0) {
@@ -407,7 +406,7 @@ void ESPWiFiSensing::prune_variation_samples_(uint32_t now) {
 
 
 uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
-    bool above_threshold, uint32_t average_variation, float decision_threshold, uint32_t now) {
+    bool above_threshold, uint32_t average_variation, float decision_threshold) {
   if (decision_threshold <= 0.0f) {
     return above_threshold ? 1 : 0;
   }
@@ -415,13 +414,6 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
   if (above_threshold) {
     const float excess =
         (static_cast<float>(average_variation) - decision_threshold) / decision_threshold;
-    if (!this->transient_pulse_test_.active) {
-      const float baseline_mean = this->adaptive_baseline_.baseline_mean();
-      this->transient_pulse_test_.ratio_start = baseline_mean > 0.0f ?
-          this->adaptive_baseline_.baseline_stddev() / baseline_mean : 0.0f;
-      this->transient_pulse_test_.threshold_start = decision_threshold;
-      this->transient_pulse_test_.start_time = now;
-    }
     this->transient_pulse_test_.active = true;
     this->transient_pulse_test_.area +=
         excess * (static_cast<float>(this->statistics_update_ms_) / 1000.0f);
@@ -441,7 +433,7 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
   const float equivalent_width = peak > 0.0f ? area / peak : 0.0f;
   const uint32_t accepted_crossings =
       this->transient_pulse_test_.elapsed_ms / this->statistics_update_ms_;
-  const bool transient_pass = equivalent_width >= 3.4f;
+  const bool pass = equivalent_width >= 3.4f;
 
   ESP_LOGI(
       TAG,
@@ -449,61 +441,8 @@ uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
       peak,
       area,
       equivalent_width,
-      transient_pass ? "PASS" : "REJECT"
+      pass ? "PASS" : "REJECT"
   );
-
-  const float baseline_mean = this->adaptive_baseline_.baseline_mean();
-  const float ratio_end = baseline_mean > 0.0f ?
-      this->adaptive_baseline_.baseline_stddev() / baseline_mean : 0.0f;
-  const float delta_ratio = ratio_end - this->transient_pulse_test_.ratio_start;
-  const uint32_t event_duration_ms = now - this->transient_pulse_test_.start_time;
-  const float duration_seconds =
-      static_cast<float>(event_duration_ms > 0 ?
-          event_duration_ms : this->transient_pulse_test_.elapsed_ms) / 1000.0f;
-  const bool duration_valid = duration_seconds > 0.0f;
-  const float threshold_rise_rate = duration_valid ?
-      (decision_threshold - this->transient_pulse_test_.threshold_start) / duration_seconds : 0.0f;
-  const bool baseline_rise_reject = transient_pass && delta_ratio >= 0.07f &&
-      threshold_rise_rate >= 25.0f;
-  const bool slow_threshold_rise_reject =
-      transient_pass && !baseline_rise_reject && duration_valid && threshold_rise_rate < 40.0f;
-  const bool pass = transient_pass && !baseline_rise_reject && !slow_threshold_rise_reject;
-
-  if (transient_pass) {
-    ESP_LOGI(
-        TAG,
-        "Baseline-rise test: W_eq=%.3f R_start=%.3f R_end=%.3f delta_R=%.3f "
-        "threshold_start=%.3f threshold_end=%.3f threshold_rise_rate=%.3f "
-        "duration=%.3f result=%s reason=baseline-variability/threshold-rise",
-        equivalent_width,
-        this->transient_pulse_test_.ratio_start,
-        ratio_end,
-        delta_ratio,
-        this->transient_pulse_test_.threshold_start,
-        decision_threshold,
-        threshold_rise_rate,
-        duration_seconds,
-        baseline_rise_reject ? "REJECT" : "PASS"
-    );
-  }
-
-  if (transient_pass && !baseline_rise_reject) {
-    ESP_LOGI(
-        TAG,
-        "Slow-threshold-rise test: W_eq=%.3f delta_R=%.3f threshold_start=%.3f "
-        "threshold_end=%.3f threshold_rise_rate=%.3f duration=%.3f "
-        "Filter1=PASS Filter2=PASS Filter3=%s final=%s%s",
-        equivalent_width,
-        delta_ratio,
-        this->transient_pulse_test_.threshold_start,
-        decision_threshold,
-        threshold_rise_rate,
-        duration_seconds,
-        slow_threshold_rise_reject ? "REJECT" : "PASS",
-        pass ? "PASS" : "REJECT",
-        slow_threshold_rise_reject ? " reason=slow-threshold-rise" : ""
-    );
-  }
 
   if (!pass) {
     ESP_LOGI(TAG, "Transient pulse REJECTED before motion decision");

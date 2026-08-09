@@ -62,7 +62,7 @@ class ESPWiFiSensing : public Component {
   bool start_ping_();
   bool warmup_active_(uint32_t now) const;
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
-  uint32_t evaluate_transient_pulse_candidate_(bool above_threshold, uint32_t average_variation, float decision_threshold, uint32_t now);
+  uint32_t evaluate_transient_pulse_candidate_(bool above_threshold, uint32_t average_variation, float decision_threshold);
   void reset_transient_pulse_test_();
   void add_variation_sample_(uint32_t variation, uint32_t now);
   void prune_variation_samples_(uint32_t now);
@@ -130,9 +130,6 @@ class ESPWiFiSensing : public Component {
     float area{0.0f};
     float peak{0.0f};
     uint32_t elapsed_ms{0};
-    float ratio_start{0.0f};
-    float threshold_start{0.0f};
-    uint32_t start_time{0};
   };
 
   TransientPulseTestState transient_pulse_test_{};
