@@ -62,6 +62,7 @@ class ESPWiFiSensing : public Component {
   bool warmup_active_(uint32_t now) const;
   bool post_warmup_lockout_active_(uint32_t now);
   void clear_motion_candidate_state_();
+  void force_motion_off_();
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
   void add_variation_sample_(uint32_t variation, uint32_t now);
   void prune_variation_samples_(uint32_t now);

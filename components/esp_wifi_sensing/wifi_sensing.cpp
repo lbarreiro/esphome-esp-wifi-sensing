@@ -252,20 +252,17 @@ void ESPWiFiSensing::loop() {
         static_cast<unsigned>(this->warmup_time_ms_ / 1000)
     );
 
-    this->clear_motion_candidate_state_();
-
-    if (this->motion_binary_sensor_ != nullptr) {
-      this->motion_binary_sensor_->publish_state(false);
-    }
+    this->force_motion_off_();
 
     return;
   }
 
   if (this->warmup_time_ms_ > 0 && !this->warmup_complete_logged_) {
-    ESP_LOGI(TAG, "Warm-up complete - starting 60s motion lockout");
-    this->warmup_complete_logged_ = true;
+    ESP_LOGI(TAG, "Warm-up complete - forcing motion OFF");
+    this->force_motion_off_();
+    ESP_LOGI(TAG, "Motion state cleared - starting 60s motion lockout");
     this->post_warmup_lockout_start_ms_ = now;
-    this->clear_motion_candidate_state_();
+    this->warmup_complete_logged_ = true;
   }
 
   if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
@@ -282,7 +279,7 @@ void ESPWiFiSensing::loop() {
       static_cast<float>(this->motion_threshold_);
 
   if (this->post_warmup_lockout_active_(now)) {
-    this->clear_motion_candidate_state_();
+    this->force_motion_off_();
 
     if (this->adaptive_threshold_enabled_) {
       this->adaptive_baseline_.update(
@@ -303,10 +300,6 @@ void ESPWiFiSensing::loop() {
       if (this->adaptive_threshold_sensor_ != nullptr) {
         this->adaptive_threshold_sensor_->publish_state(this->adaptive_baseline_.adaptive_threshold());
       }
-    }
-
-    if (this->motion_binary_sensor_ != nullptr) {
-      this->motion_binary_sensor_->publish_state(false);
     }
 
     return;
@@ -444,7 +437,7 @@ bool ESPWiFiSensing::post_warmup_lockout_active_(uint32_t now) {
   }
 
   if (!this->post_warmup_lockout_complete_logged_) {
-    this->clear_motion_candidate_state_();
+    this->force_motion_off_();
     ESP_LOGI(TAG, "Post-warmup motion lockout complete - motion detection enabled");
     this->post_warmup_lockout_complete_logged_ = true;
   }
@@ -457,6 +450,15 @@ void ESPWiFiSensing::clear_motion_candidate_state_() {
   this->consecutive_above_threshold_ = 0;
   this->motion_state_ = false;
   this->last_motion_time_ = 0;
+}
+
+
+void ESPWiFiSensing::force_motion_off_() {
+  this->clear_motion_candidate_state_();
+
+  if (this->motion_binary_sensor_ != nullptr) {
+    this->motion_binary_sensor_->publish_state(false);
+  }
 }
 
 
