@@ -252,18 +252,16 @@ void ESPWiFiSensing::loop() {
         static_cast<unsigned>(this->warmup_time_ms_ / 1000)
     );
 
-    this->consecutive_above_threshold_ = 0;
-    this->motion_state_ = false;
-
-    if (this->motion_binary_sensor_ != nullptr) {
-      this->motion_binary_sensor_->publish_state(false);
-    }
+    this->force_motion_off_();
 
     return;
   }
 
   if (this->warmup_time_ms_ > 0 && !this->warmup_complete_logged_) {
-    ESP_LOGI(TAG, "Adaptive baseline warm-up complete");
+    ESP_LOGI(TAG, "Warm-up complete - forcing motion OFF");
+    this->force_motion_off_();
+    ESP_LOGI(TAG, "Motion state cleared - starting 60s motion lockout");
+    this->post_warmup_lockout_start_ms_ = now;
     this->warmup_complete_logged_ = true;
   }
 
@@ -279,6 +277,33 @@ void ESPWiFiSensing::loop() {
   const float decision_threshold = this->adaptive_threshold_enabled_ ?
       this->adaptive_baseline_.adaptive_threshold() :
       static_cast<float>(this->motion_threshold_);
+
+  if (this->post_warmup_lockout_active_(now)) {
+    this->force_motion_off_();
+
+    if (this->adaptive_threshold_enabled_) {
+      this->adaptive_baseline_.update(
+          static_cast<float>(average_variation),
+          false,
+          now,
+          this->statistics_update_ms_
+      );
+
+      if (this->baseline_mean_sensor_ != nullptr) {
+        this->baseline_mean_sensor_->publish_state(this->adaptive_baseline_.baseline_mean());
+      }
+
+      if (this->baseline_stddev_sensor_ != nullptr) {
+        this->baseline_stddev_sensor_->publish_state(this->adaptive_baseline_.baseline_stddev());
+      }
+
+      if (this->adaptive_threshold_sensor_ != nullptr) {
+        this->adaptive_threshold_sensor_->publish_state(this->adaptive_baseline_.adaptive_threshold());
+      }
+    }
+
+    return;
+  }
 
   bool motion_detected = false;
 
@@ -399,6 +424,41 @@ void ESPWiFiSensing::prune_variation_samples_(uint32_t now) {
 
 bool ESPWiFiSensing::warmup_active_(uint32_t now) const {
   return this->warmup_time_ms_ > 0 && now < this->warmup_time_ms_;
+}
+
+
+bool ESPWiFiSensing::post_warmup_lockout_active_(uint32_t now) {
+  if (this->warmup_time_ms_ == 0 || !this->warmup_complete_logged_) {
+    return false;
+  }
+
+  if (now - this->post_warmup_lockout_start_ms_ < POST_WARMUP_LOCKOUT_MS) {
+    return true;
+  }
+
+  if (!this->post_warmup_lockout_complete_logged_) {
+    this->force_motion_off_();
+    ESP_LOGI(TAG, "Post-warmup motion lockout complete - motion detection enabled");
+    this->post_warmup_lockout_complete_logged_ = true;
+  }
+
+  return false;
+}
+
+
+void ESPWiFiSensing::clear_motion_candidate_state_() {
+  this->consecutive_above_threshold_ = 0;
+  this->motion_state_ = false;
+  this->last_motion_time_ = 0;
+}
+
+
+void ESPWiFiSensing::force_motion_off_() {
+  this->clear_motion_candidate_state_();
+
+  if (this->motion_binary_sensor_ != nullptr) {
+    this->motion_binary_sensor_->publish_state(false);
+  }
 }
 
 

@@ -60,6 +60,9 @@ class ESPWiFiSensing : public Component {
   bool start_csi_();
   bool start_ping_();
   bool warmup_active_(uint32_t now) const;
+  bool post_warmup_lockout_active_(uint32_t now);
+  void clear_motion_candidate_state_();
+  void force_motion_off_();
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
   void add_variation_sample_(uint32_t variation, uint32_t now);
   void prune_variation_samples_(uint32_t now);
@@ -113,6 +116,9 @@ class ESPWiFiSensing : public Component {
   uint32_t learning_delay_ms_{60000};
   uint32_t warmup_time_ms_{0};
   bool warmup_complete_logged_{false};
+  bool post_warmup_lockout_complete_logged_{false};
+  uint32_t post_warmup_lockout_start_ms_{0};
+  static constexpr uint32_t POST_WARMUP_LOCKOUT_MS = 60000;
   AdaptiveBaseline adaptive_baseline_{};
   uint32_t motion_threshold_{6000};
   uint32_t motion_debounce_{2};
