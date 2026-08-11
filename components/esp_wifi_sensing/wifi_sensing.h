@@ -51,6 +51,10 @@ class ESPWiFiSensing : public Component {
   uint32_t previous_csi_metric_{0};
   bool have_previous_sample_{false};
 
+  // Diagnostic per-sample logging state.
+  uint32_t diagnostic_previous_csi_metric_{0};
+  bool diagnostic_have_previous_sample_{false};
+
   // Estatísticas para o relatório.
   uint32_t variation_sum_{0};
   uint32_t variation_max_{0};

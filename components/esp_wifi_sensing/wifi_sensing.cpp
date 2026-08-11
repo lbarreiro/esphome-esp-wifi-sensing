@@ -1,6 +1,7 @@
 #include "wifi_sensing.h"
 
 #include <cstdlib>
+#include <cstdint>
 
 #include "esp_err.h"
 #include "esp_netif.h"
@@ -124,6 +125,10 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing";
+
+static const char *csi_algorithm_to_string(CsiAlgorithm algorithm) {
+  return algorithm == CsiAlgorithm::VARIANCE ? "variance" : "absolute_sum";
+}
 
 
 void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
@@ -430,9 +435,49 @@ void ESPWiFiSensing::csi_callback_(
     metric = self->algorithm_.process(metric);
   }
 
+  const uint16_t csi_len = self->pipeline_.latest_len();
+
   self->latest_csi_metric_ = metric;
-  self->latest_csi_len_ = self->pipeline_.latest_len();
+  self->latest_csi_len_ = csi_len;
   self->new_csi_sample_ = self->pipeline_.has_new_sample();
+
+  const uint32_t sample_count = self->csi_packet_count_;
+  const uint32_t timestamp = millis();
+
+  if (self->diagnostic_have_previous_sample_) {
+    const int64_t delta = static_cast<int64_t>(metric) -
+                          static_cast<int64_t>(self->diagnostic_previous_csi_metric_);
+    const uint64_t absolute_delta = delta < 0 ? static_cast<uint64_t>(-delta) :
+                                                static_cast<uint64_t>(delta);
+
+    ESP_LOGI(
+        TAG,
+        "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,%lld,%llu",
+        static_cast<unsigned>(timestamp),
+        static_cast<unsigned>(sample_count),
+        csi_algorithm_to_string(self->selected_algorithm_),
+        self->gain_compensation_enabled_ ? "ON" : "OFF",
+        static_cast<unsigned>(csi_len),
+        static_cast<unsigned>(metric),
+        static_cast<long long>(delta),
+        static_cast<unsigned long long>(absolute_delta)
+    );
+  } else {
+    ESP_LOGI(
+        TAG,
+        "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,N/A,N/A",
+        static_cast<unsigned>(timestamp),
+        static_cast<unsigned>(sample_count),
+        csi_algorithm_to_string(self->selected_algorithm_),
+        self->gain_compensation_enabled_ ? "ON" : "OFF",
+        static_cast<unsigned>(csi_len),
+        static_cast<unsigned>(metric)
+    );
+  }
+
+  self->diagnostic_previous_csi_metric_ = metric;
+  self->diagnostic_have_previous_sample_ = true;
+
   self->pipeline_.clear_new_sample();
 }
 
