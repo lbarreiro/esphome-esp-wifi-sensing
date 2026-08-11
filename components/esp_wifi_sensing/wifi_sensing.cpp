@@ -478,6 +478,20 @@ void ESPWiFiSensing::csi_callback_(
   self->diagnostic_previous_csi_metric_ = metric;
   self->diagnostic_have_previous_sample_ = true;
 
+  const CsiTemporalDiagnosticsSample temporal_sample =
+      self->temporal_diagnostics_.update(metric);
+  if (temporal_sample.has_delta) {
+    if (self->csi_delta_sensor_ != nullptr) {
+      self->csi_delta_sensor_->publish_state(temporal_sample.delta);
+    }
+    if (self->csi_temporal_mean_sensor_ != nullptr) {
+      self->csi_temporal_mean_sensor_->publish_state(temporal_sample.temporal_mean);
+    }
+    if (self->csi_temporal_persistence_sensor_ != nullptr) {
+      self->csi_temporal_persistence_sensor_->publish_state(temporal_sample.temporal_persistence);
+    }
+  }
+
   self->pipeline_.clear_new_sample();
 }
 

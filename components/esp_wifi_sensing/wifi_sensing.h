@@ -13,6 +13,8 @@
 #include "csi_packet.h"
 #include "threshold_algorithm.h"
 #include "variance_algorithm.h"
+#include "csi_temporal_diagnostics.h"
+#include "esphome/components/sensor/sensor.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -29,6 +31,9 @@ class ESPWiFiSensing : public Component {
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
+  void set_csi_delta_sensor(sensor::Sensor *sensor) { this->csi_delta_sensor_ = sensor; }
+  void set_csi_temporal_mean_sensor(sensor::Sensor *sensor) { this->csi_temporal_mean_sensor_ = sensor; }
+  void set_csi_temporal_persistence_sensor(sensor::Sensor *sensor) { this->csi_temporal_persistence_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -74,6 +79,11 @@ class ESPWiFiSensing : public Component {
   CsiPipeline pipeline_{};
   ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
+  CsiTemporalDiagnostics temporal_diagnostics_{};
+
+  sensor::Sensor *csi_delta_sensor_{nullptr};
+  sensor::Sensor *csi_temporal_mean_sensor_{nullptr};
+  sensor::Sensor *csi_temporal_persistence_sensor_{nullptr};
 };
 
 }  // namespace esp_wifi_sensing
