@@ -13,6 +13,8 @@
 #include "csi_packet.h"
 #include "threshold_algorithm.h"
 #include "variance_algorithm.h"
+#include "csi_temporal_persistence_filter.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -29,6 +31,9 @@ class ESPWiFiSensing : public Component {
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
+  void set_temporal_persistence_binary_sensor(binary_sensor::BinarySensor *sensor) {
+    this->temporal_persistence_binary_sensor_ = sensor;
+  }
 
  protected:
   static void csi_callback_(
@@ -74,6 +79,9 @@ class ESPWiFiSensing : public Component {
   CsiPipeline pipeline_{};
   ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
+  CsiTemporalPersistenceFilter temporal_persistence_filter_{};
+
+  binary_sensor::BinarySensor *temporal_persistence_binary_sensor_{nullptr};
 };
 
 }  // namespace esp_wifi_sensing

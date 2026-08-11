@@ -478,6 +478,13 @@ void ESPWiFiSensing::csi_callback_(
   self->diagnostic_previous_csi_metric_ = metric;
   self->diagnostic_have_previous_sample_ = true;
 
+  if (self->temporal_persistence_binary_sensor_ != nullptr) {
+    const bool temporal_persistence_on = self->temporal_persistence_filter_.update_metric(metric);
+    self->temporal_persistence_binary_sensor_->publish_state(temporal_persistence_on);
+  } else {
+    self->temporal_persistence_filter_.update_metric(metric);
+  }
+
   self->pipeline_.clear_new_sample();
 }
 
