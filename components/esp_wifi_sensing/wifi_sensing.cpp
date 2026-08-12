@@ -478,11 +478,23 @@ void ESPWiFiSensing::csi_callback_(
   self->diagnostic_previous_csi_metric_ = metric;
   self->diagnostic_have_previous_sample_ = true;
 
+  const AdaptiveMotionDetectorResult motion_result =
+      self->motion_detector_.update(metric, timestamp);
+
   if (self->temporal_persistence_binary_sensor_ != nullptr) {
-    const bool temporal_persistence_on = self->temporal_persistence_filter_.update_metric(metric);
-    self->temporal_persistence_binary_sensor_->publish_state(temporal_persistence_on);
-  } else {
-    self->temporal_persistence_filter_.update_metric(metric);
+    self->temporal_persistence_binary_sensor_->publish_state(motion_result.persistence_on);
+  }
+  if (self->motion_binary_sensor_ != nullptr) {
+    self->motion_binary_sensor_->publish_state(motion_result.motion);
+  }
+  if (self->baseline_mean_sensor_ != nullptr) {
+    self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
+  }
+  if (self->baseline_stddev_sensor_ != nullptr) {
+    self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
+  }
+  if (self->adaptive_threshold_sensor_ != nullptr) {
+    self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
   }
 
   self->pipeline_.clear_new_sample();
