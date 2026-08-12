@@ -14,6 +14,7 @@
 #include "threshold_algorithm.h"
 #include "variance_algorithm.h"
 #include "adaptive_motion_detector.h"
+#include "diagnostic_publish_rate_limiter.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 
@@ -93,6 +94,7 @@ class ESPWiFiSensing : public Component {
   ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
   AdaptiveMotionDetector motion_detector_{};
+  DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
 
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
   binary_sensor::BinarySensor *temporal_persistence_binary_sensor_{nullptr};

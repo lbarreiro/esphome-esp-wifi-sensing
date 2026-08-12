@@ -487,14 +487,16 @@ void ESPWiFiSensing::csi_callback_(
   if (self->motion_binary_sensor_ != nullptr) {
     self->motion_binary_sensor_->publish_state(motion_result.motion);
   }
-  if (self->baseline_mean_sensor_ != nullptr) {
-    self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
-  }
-  if (self->baseline_stddev_sensor_ != nullptr) {
-    self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
-  }
-  if (self->adaptive_threshold_sensor_ != nullptr) {
-    self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
+  if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
+    if (self->baseline_mean_sensor_ != nullptr) {
+      self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
+    }
+    if (self->baseline_stddev_sensor_ != nullptr) {
+      self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
+    }
+    if (self->adaptive_threshold_sensor_ != nullptr) {
+      self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
+    }
   }
 
   self->pipeline_.clear_new_sample();
