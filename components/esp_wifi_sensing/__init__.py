@@ -27,6 +27,7 @@ CsiAlgorithm = esp_wifi_sensing_ns.enum("CsiAlgorithm", is_class=True)
 ALGORITHMS = {
     "absolute_sum": CsiAlgorithm.ABSOLUTE_SUM,
     "variance": CsiAlgorithm.VARIANCE,
+    "amplitude": CsiAlgorithm.AMPLITUDE,
     "jitter": CsiAlgorithm.JITTER,
 }
 

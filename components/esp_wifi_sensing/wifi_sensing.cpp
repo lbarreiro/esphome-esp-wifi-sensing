@@ -14,6 +14,8 @@ static const char *csi_algorithm_to_string(CsiAlgorithm algorithm) {
   switch (algorithm) {
     case CsiAlgorithm::VARIANCE:
       return "variance";
+    case CsiAlgorithm::AMPLITUDE:
+      return "amplitude";
     case CsiAlgorithm::JITTER:
       return "jitter";
     case CsiAlgorithm::ABSOLUTE_SUM:
@@ -183,6 +185,8 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   uint32_t metric = 0;
   if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
     metric = self->variance_algorithm_.process(processed_packet);
+  } else if (self->selected_algorithm_ == CsiAlgorithm::AMPLITUDE) {
+    metric = self->amplitude_algorithm_.process(processed_packet);
   } else if (self->selected_algorithm_ == CsiAlgorithm::JITTER) {
     metric = self->jitter_algorithm_.process(processed_packet);
   } else if (processed_packet.raw_bytes != nullptr) {
@@ -264,7 +268,9 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
   ESP_LOGCONFIG(TAG, "  Algorithm: %s", csi_algorithm_to_string(this->selected_algorithm_));
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
-  if (this->selected_algorithm_ == CsiAlgorithm::JITTER) {
+  if (this->selected_algorithm_ == CsiAlgorithm::AMPLITUDE) {
+    ESP_LOGCONFIG(TAG, "  Amplitude metric: normalized per-subcarrier magnitude L1 distance (0..10000)");
+  } else if (this->selected_algorithm_ == CsiAlgorithm::JITTER) {
     ESP_LOGCONFIG(TAG, "  Jitter metric: normalized temporal L1 distance (0..10000)");
   }
 }

@@ -14,6 +14,7 @@
 #include "threshold_algorithm.h"
 #include "variance_algorithm.h"
 #include "jitter_algorithm.h"
+#include "amplitude_algorithm.h"
 #include "adaptive_motion_detector.h"
 #include "diagnostic_publish_rate_limiter.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -25,6 +26,7 @@ namespace esp_wifi_sensing {
 enum class CsiAlgorithm {
   ABSOLUTE_SUM,
   VARIANCE,
+  AMPLITUDE,
   JITTER,
 };
 
@@ -52,30 +54,23 @@ class ESPWiFiSensing : public Component {
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
 
  protected:
-  static void csi_callback_(
-      void *ctx,
-      wifi_csi_info_t *data
-  );
+  static void csi_callback_(void *ctx, wifi_csi_info_t *data);
 
   bool start_csi_();
   bool start_ping_();
 
   volatile uint32_t csi_packet_count_{0};
-
   volatile uint32_t latest_csi_metric_{0};
   volatile uint16_t latest_csi_len_{0};
   volatile bool new_csi_sample_{false};
 
   uint32_t previous_csi_metric_{0};
   bool have_previous_sample_{false};
-
   uint32_t diagnostic_previous_csi_metric_{0};
   bool diagnostic_have_previous_sample_{false};
-
   uint32_t variation_sum_{0};
   uint32_t variation_max_{0};
   uint32_t variation_samples_{0};
-
   uint32_t last_reported_count_{0};
   uint32_t last_report_time_{0};
 
@@ -90,6 +85,7 @@ class ESPWiFiSensing : public Component {
   CsiPipeline pipeline_{};
   ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
+  CsiAmplitudeAlgorithm amplitude_algorithm_{};
   JitterAlgorithm jitter_algorithm_{};
   AdaptiveMotionDetector motion_detector_{};
   DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
