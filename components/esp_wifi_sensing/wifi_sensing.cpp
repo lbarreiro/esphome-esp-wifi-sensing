@@ -241,16 +241,13 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   const AdaptiveMotionDetectorResult motion_result =
       self->motion_detector_.update(metric, timestamp);
 
-  if (self->motion_candidate_binary_sensor_ != nullptr) {
-    self->motion_candidate_binary_sensor_->publish_state(motion_result.candidate);
-  }
-  if (self->temporal_persistence_binary_sensor_ != nullptr) {
-    self->temporal_persistence_binary_sensor_->publish_state(motion_result.persistence_on);
-  }
   if (self->motion_binary_sensor_ != nullptr) {
     self->motion_binary_sensor_->publish_state(motion_result.motion);
   }
   if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
+    if (self->metric_sensor_ != nullptr) {
+      self->metric_sensor_->publish_state(metric);
+    }
     if (self->baseline_mean_sensor_ != nullptr) {
       self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
     }
