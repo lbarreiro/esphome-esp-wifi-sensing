@@ -46,12 +46,7 @@ class ESPWiFiSensing : public Component {
   void set_warmup_time(uint32_t time_ms) { this->motion_detector_.set_warmup_time_ms(time_ms); }
   void set_motion_hold_time(uint32_t time_ms) { this->motion_detector_.set_motion_hold_time_ms(time_ms); }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
-  void set_motion_candidate_binary_sensor(binary_sensor::BinarySensor *sensor) {
-    this->motion_candidate_binary_sensor_ = sensor;
-  }
-  void set_temporal_persistence_binary_sensor(binary_sensor::BinarySensor *sensor) {
-    this->temporal_persistence_binary_sensor_ = sensor;
-  }
+  void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
   void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
   void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
@@ -94,8 +89,7 @@ class ESPWiFiSensing : public Component {
   DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
 
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *motion_candidate_binary_sensor_{nullptr};
-  binary_sensor::BinarySensor *temporal_persistence_binary_sensor_{nullptr};
+  sensor::Sensor *metric_sensor_{nullptr};
   sensor::Sensor *baseline_mean_sensor_{nullptr};
   sensor::Sensor *baseline_stddev_sensor_{nullptr};
   sensor::Sensor *adaptive_threshold_sensor_{nullptr};
