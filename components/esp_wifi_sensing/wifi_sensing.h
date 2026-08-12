@@ -13,6 +13,7 @@
 #include "csi_packet.h"
 #include "threshold_algorithm.h"
 #include "variance_algorithm.h"
+#include "jitter_algorithm.h"
 #include "adaptive_motion_detector.h"
 #include "diagnostic_publish_rate_limiter.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -24,6 +25,7 @@ namespace esp_wifi_sensing {
 enum class CsiAlgorithm {
   ABSOLUTE_SUM,
   VARIANCE,
+  JITTER,
 };
 
 class ESPWiFiSensing : public Component {
@@ -58,23 +60,18 @@ class ESPWiFiSensing : public Component {
   bool start_csi_();
   bool start_ping_();
 
-  // CSI
   volatile uint32_t csi_packet_count_{0};
 
-  // Métrica calculada a partir do buffer CSI.
   volatile uint32_t latest_csi_metric_{0};
   volatile uint16_t latest_csi_len_{0};
   volatile bool new_csi_sample_{false};
 
-  // Comparação entre amostras.
   uint32_t previous_csi_metric_{0};
   bool have_previous_sample_{false};
 
-  // Diagnostic per-sample logging state.
   uint32_t diagnostic_previous_csi_metric_{0};
   bool diagnostic_have_previous_sample_{false};
 
-  // Estatísticas para o relatório.
   uint32_t variation_sum_{0};
   uint32_t variation_max_{0};
   uint32_t variation_samples_{0};
@@ -93,6 +90,7 @@ class ESPWiFiSensing : public Component {
   CsiPipeline pipeline_{};
   ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
+  JitterAlgorithm jitter_algorithm_{};
   AdaptiveMotionDetector motion_detector_{};
   DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
 
