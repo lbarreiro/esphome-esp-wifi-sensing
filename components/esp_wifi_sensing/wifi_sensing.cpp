@@ -241,6 +241,9 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   const AdaptiveMotionDetectorResult motion_result =
       self->motion_detector_.update(metric, timestamp);
 
+  if (self->motion_candidate_binary_sensor_ != nullptr) {
+    self->motion_candidate_binary_sensor_->publish_state(motion_result.candidate);
+  }
   if (self->temporal_persistence_binary_sensor_ != nullptr) {
     self->temporal_persistence_binary_sensor_->publish_state(motion_result.persistence_on);
   }
