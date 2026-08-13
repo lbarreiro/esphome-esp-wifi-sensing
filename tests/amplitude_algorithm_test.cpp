@@ -22,10 +22,11 @@ int main() {
 
   assert(algorithm.process(packet(a, sizeof(a))) == 0);
 
-  // Common-mode amplitude scaling should largely disappear after normalization.
-  assert(algorithm.process(packet(same_scale, sizeof(same_scale))) <= 1);
+  // Common-mode amplitude scaling must remain visible to preserve motion-related
+  // amplitude changes rather than removing them through packet normalization.
+  assert(algorithm.process(packet(same_scale, sizeof(same_scale))) > 0);
 
-  // Redistributing energy across subcarriers must produce a non-zero metric.
+  // Redistributing energy across subcarriers must also produce a non-zero metric.
   assert(algorithm.process(packet(redistributed, sizeof(redistributed))) > 0);
 
   algorithm.reset();
