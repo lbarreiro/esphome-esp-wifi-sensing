@@ -43,9 +43,9 @@ class AdaptiveMotionDetector {
     const uint32_t elapsed_ms = now_ms - this->last_update_ms_;
     this->last_update_ms_ = now_ms;
 
-    // Evaluate the current sample against the baseline from the previous
-    // sample first. A movement sample must not contaminate the baseline
-    // before we decide whether that sample is movement.
+    // Evaluate the current sample against the previous baseline first.
+    // A movement sample must not contaminate the baseline before the
+    // detector decides whether that sample is movement.
     const float threshold = this->adaptive_threshold_value_();
     const float difference = std::fabs(static_cast<float>(metric) - this->baseline_mean_);
     const bool ready = now_ms - this->started_ms_ >= this->warmup_time_ms_ + this->learning_delay_ms_;
@@ -56,6 +56,7 @@ class AdaptiveMotionDetector {
       this->debounce_count_ = 0;
       this->last_motion_ms_ = 0;
       this->reset_persistence_();
+      this->update_baseline_(metric, elapsed_ms);
     } else {
       const bool persistence_on = this->update_persistence_(candidate);
 
@@ -75,11 +76,13 @@ class AdaptiveMotionDetector {
           this->motion_ = false;
         }
       }
-    }
 
-    // Only after the decision has been made do we allow the current sample
-    // to influence the adaptive baseline.
-    this->update_baseline_(metric, elapsed_ms);
+      // Candidate samples are excluded from baseline learning. Only samples
+      // currently considered normal are allowed to move the adaptive baseline.
+      if (!candidate) {
+        this->update_baseline_(metric, elapsed_ms);
+      }
+    }
 
     return this->result_(candidate, now_ms);
   }
