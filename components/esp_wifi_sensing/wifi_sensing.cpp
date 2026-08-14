@@ -205,38 +205,42 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   const uint32_t sample_count = self->csi_packet_count_;
   const uint32_t timestamp = millis();
 
-  if (self->diagnostic_have_previous_sample_) {
-    const int64_t delta = static_cast<int64_t>(metric) -
-                          static_cast<int64_t>(self->diagnostic_previous_csi_metric_);
-    const uint64_t absolute_delta = delta < 0 ? static_cast<uint64_t>(-delta) :
-                                                static_cast<uint64_t>(delta);
-    ESP_LOGI(
-        TAG,
-        "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,%lld,%llu",
-        static_cast<unsigned>(timestamp),
-        static_cast<unsigned>(sample_count),
-        csi_algorithm_to_string(self->selected_algorithm_),
-        self->gain_compensation_enabled_ ? "ON" : "OFF",
-        static_cast<unsigned>(csi_len),
-        static_cast<unsigned>(metric),
-        static_cast<long long>(delta),
-        static_cast<unsigned long long>(absolute_delta)
-    );
-  } else {
-    ESP_LOGI(
-        TAG,
-        "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,N/A,N/A",
-        static_cast<unsigned>(timestamp),
-        static_cast<unsigned>(sample_count),
-        csi_algorithm_to_string(self->selected_algorithm_),
-        self->gain_compensation_enabled_ ? "ON" : "OFF",
-        static_cast<unsigned>(csi_len),
-        static_cast<unsigned>(metric)
-    );
+  // Keep CSI_SAMPLE diagnostic logging at 1 Hz only. CSI processing and
+  // motion detection continue at the full CSI callback rate.
+  if (timestamp - self->diagnostic_last_log_time_ >= 1000) {
+    if (self->diagnostic_have_previous_sample_) {
+      const int64_t delta = static_cast<int64_t>(metric) -
+                            static_cast<int64_t>(self->diagnostic_previous_csi_metric_);
+      const uint64_t absolute_delta = delta < 0 ? static_cast<uint64_t>(-delta) :
+                                                  static_cast<uint64_t>(delta);
+      ESP_LOGI(
+          TAG,
+          "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,%lld,%llu",
+          static_cast<unsigned>(timestamp),
+          static_cast<unsigned>(sample_count),
+          csi_algorithm_to_string(self->selected_algorithm_),
+          self->gain_compensation_enabled_ ? "ON" : "OFF",
+          static_cast<unsigned>(csi_len),
+          static_cast<unsigned>(metric),
+          static_cast<long long>(delta),
+          static_cast<unsigned long long>(absolute_delta)
+      );
+    } else {
+      ESP_LOGI(
+          TAG,
+          "CSI_SAMPLE,%u,%u,%s,%s,%u,%u,N/A,N/A",
+          static_cast<unsigned>(timestamp),
+          static_cast<unsigned>(sample_count),
+          csi_algorithm_to_string(self->selected_algorithm_),
+          self->gain_compensation_enabled_ ? "ON" : "OFF",
+          static_cast<unsigned>(csi_len),
+          static_cast<unsigned>(metric)
+      );
+    }
+    self->diagnostic_previous_csi_metric_ = metric;
+    self->diagnostic_have_previous_sample_ = true;
+    self->diagnostic_last_log_time_ = timestamp;
   }
-
-  self->diagnostic_previous_csi_metric_ = metric;
-  self->diagnostic_have_previous_sample_ = true;
 
   const AdaptiveMotionDetectorResult motion_result =
       self->motion_detector_.update(metric, timestamp);
