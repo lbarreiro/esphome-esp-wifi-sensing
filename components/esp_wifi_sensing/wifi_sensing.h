@@ -66,6 +66,7 @@ class ESPWiFiSensing : public Component {
   bool have_previous_sample_{false};
   uint32_t diagnostic_previous_csi_metric_{0};
   bool diagnostic_have_previous_sample_{false};
+  uint32_t diagnostic_last_log_time_{0};
   uint32_t variation_sum_{0};
   uint32_t variation_max_{0};
   uint32_t variation_samples_{0};
