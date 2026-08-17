@@ -22,6 +22,7 @@ class AdaptiveMotionDetector {
 
   void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
   void set_sigma_multiplier(float multiplier) { this->sigma_multiplier_ = multiplier; }
+  void set_fixed_threshold(uint32_t threshold) { this->fixed_threshold_ = threshold; }
   void set_baseline_rise_time_ms(uint32_t time_ms) { this->baseline_rise_time_ms_ = time_ms; }
   void set_baseline_fall_time_ms(uint32_t time_ms) { this->baseline_fall_time_ms_ = time_ms; }
   void set_learning_delay_ms(uint32_t time_ms) { this->learning_delay_ms_ = time_ms; }
@@ -43,10 +44,9 @@ class AdaptiveMotionDetector {
     const uint32_t elapsed_ms = now_ms - this->last_update_ms_;
     this->last_update_ms_ = now_ms;
 
-    // Evaluate the current sample against the previous baseline first.
-    // A movement sample must not contaminate the baseline before the
-    // detector decides whether that sample is movement.
-    const float threshold = this->adaptive_threshold_value_();
+    const float threshold = this->adaptive_threshold_enabled_
+                                ? this->adaptive_threshold_value_()
+                                : static_cast<float>(this->fixed_threshold_);
     const float difference = std::fabs(static_cast<float>(metric) - this->baseline_mean_);
     const bool ready = now_ms - this->started_ms_ >= this->warmup_time_ms_ + this->learning_delay_ms_;
     const bool candidate = ready && (this->adaptive_threshold_enabled_ ? difference > threshold : metric > threshold);
@@ -77,9 +77,7 @@ class AdaptiveMotionDetector {
         }
       }
 
-      // Candidate samples are excluded from baseline learning. Only samples
-      // currently considered normal are allowed to move the adaptive baseline.
-      if (!candidate) {
+      if (this->adaptive_threshold_enabled_ && !candidate) {
         this->update_baseline_(metric, elapsed_ms);
       }
     }
@@ -101,8 +99,10 @@ class AdaptiveMotionDetector {
   }
 
   float baseline_mean() const { return this->baseline_mean_; }
-  float baseline_stddev() const { return std::sqrt(this->baseline_variance_); }
-  float adaptive_threshold() const { return this->adaptive_threshold_value_(); }
+  float baseline_stddev() const { return this->baseline_stddev_value_(); }
+  float adaptive_threshold() const {
+    return this->adaptive_threshold_enabled_ ? this->adaptive_threshold_value_() : static_cast<float>(this->fixed_threshold_);
+  }
   bool motion() const { return this->motion_; }
   bool persistence_has_valid_window() const { return this->persistence_valid_samples_ == kPersistenceWindowSize; }
 
@@ -159,14 +159,16 @@ class AdaptiveMotionDetector {
     result.motion = this->motion_;
     result.baseline_mean = this->baseline_mean_;
     result.baseline_stddev = this->baseline_stddev();
-    result.adaptive_threshold = this->adaptive_threshold_value_();
+    result.adaptive_threshold = this->adaptive_threshold();
     return result;
   }
 
-  float adaptive_threshold_value_() const { return this->baseline_stddev() * this->sigma_multiplier_; }
+  float adaptive_threshold_value_() const { return this->baseline_stddev_value_() * this->sigma_multiplier_; }
+  float baseline_stddev_value_() const { return std::sqrt(this->baseline_variance_); }
 
   bool adaptive_threshold_enabled_{true};
   float sigma_multiplier_{3.0f};
+  uint32_t fixed_threshold_{6};
   uint32_t baseline_rise_time_ms_{600000};
   uint32_t baseline_fall_time_ms_{3600000};
   uint32_t learning_delay_ms_{60000};
