@@ -38,6 +38,7 @@ class ESPWiFiSensing : public Component {
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
   void set_adaptive_threshold_enabled(bool enabled) { this->motion_detector_.set_adaptive_threshold_enabled(enabled); }
+  void set_fixed_threshold(uint32_t threshold) { this->motion_detector_.set_fixed_threshold(threshold); }
   void set_sigma_multiplier(float multiplier) { this->motion_detector_.set_sigma_multiplier(multiplier); }
   void set_baseline_rise_time(uint32_t time_ms) { this->motion_detector_.set_baseline_rise_time_ms(time_ms); }
   void set_baseline_fall_time(uint32_t time_ms) { this->motion_detector_.set_baseline_fall_time_ms(time_ms); }
