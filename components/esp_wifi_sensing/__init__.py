@@ -4,7 +4,6 @@ from esphome.const import CONF_ID
 
 CONF_ALGORITHM = "algorithm"
 CONF_GAIN_COMPENSATION = "gain_compensation"
-
 CONF_ADAPTIVE_THRESHOLD = "adaptive_threshold"
 CONF_THRESHOLD = "threshold"
 CONF_SIGMA_MULTIPLIER = "sigma_multiplier"
@@ -14,16 +13,12 @@ CONF_LEARNING_DELAY = "learning_delay"
 CONF_DEBOUNCE = "debounce"
 CONF_WARMUP_TIME = "warmup_time"
 CONF_MOTION_HOLD_TIME = "motion_hold_time"
+CONF_PERSISTENCE = "persistence"
 
 DEPENDENCIES = ["wifi"]
 
 esp_wifi_sensing_ns = cg.esphome_ns.namespace("esp_wifi_sensing")
-
-ESPWiFiSensing = esp_wifi_sensing_ns.class_(
-    "ESPWiFiSensing",
-    cg.Component,
-)
-
+ESPWiFiSensing = esp_wifi_sensing_ns.class_("ESPWiFiSensing", cg.Component)
 CsiAlgorithm = esp_wifi_sensing_ns.enum("CsiAlgorithm", is_class=True)
 ALGORITHMS = {
     "absolute_sum": CsiAlgorithm.ABSOLUTE_SUM,
@@ -35,9 +30,7 @@ ALGORITHMS = {
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(ESPWiFiSensing),
-        cv.Optional(CONF_ALGORITHM, default="absolute_sum"): cv.enum(
-            ALGORITHMS, lower=True
-        ),
+        cv.Optional(CONF_ALGORITHM, default="absolute_sum"): cv.enum(ALGORITHMS, lower=True),
         cv.Optional(CONF_GAIN_COMPENSATION, default=False): cv.boolean,
         cv.Optional(CONF_ADAPTIVE_THRESHOLD, default=True): cv.boolean,
         cv.Optional(CONF_THRESHOLD, default=6): cv.positive_int,
@@ -48,6 +41,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DEBOUNCE, default=2): cv.positive_int,
         cv.Optional(CONF_WARMUP_TIME, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_MOTION_HOLD_TIME, default="60s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_PERSISTENCE, default=7): cv.int_range(min=1, max=10),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -66,5 +60,6 @@ async def to_code(config):
     cg.add(var.set_debounce(config[CONF_DEBOUNCE]))
     cg.add(var.set_warmup_time(config[CONF_WARMUP_TIME].total_milliseconds))
     cg.add(var.set_motion_hold_time(config[CONF_MOTION_HOLD_TIME].total_milliseconds))
+    cg.add(var.set_persistence_samples(config[CONF_PERSISTENCE]))
     if config[CONF_GAIN_COMPENSATION]:
         cg.add_define("USE_ESP_WIFI_SENSING_GAIN_COMPENSATION")
