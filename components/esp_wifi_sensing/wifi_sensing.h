@@ -46,6 +46,7 @@ class ESPWiFiSensing : public Component {
   void set_debounce(uint32_t samples) { this->motion_detector_.set_debounce_samples(samples); }
   void set_warmup_time(uint32_t time_ms) { this->motion_detector_.set_warmup_time_ms(time_ms); }
   void set_motion_hold_time(uint32_t time_ms) { this->motion_detector_.set_motion_hold_time_ms(time_ms); }
+  void set_persistence_samples(uint8_t samples) { this->motion_detector_.set_persistence_samples(samples); }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
   void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
