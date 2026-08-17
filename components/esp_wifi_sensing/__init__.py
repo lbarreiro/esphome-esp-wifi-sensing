@@ -6,6 +6,7 @@ CONF_ALGORITHM = "algorithm"
 CONF_GAIN_COMPENSATION = "gain_compensation"
 
 CONF_ADAPTIVE_THRESHOLD = "adaptive_threshold"
+CONF_THRESHOLD = "threshold"
 CONF_SIGMA_MULTIPLIER = "sigma_multiplier"
 CONF_BASELINE_RISE_TIME = "baseline_rise_time"
 CONF_BASELINE_FALL_TIME = "baseline_fall_time"
@@ -39,6 +40,7 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_GAIN_COMPENSATION, default=False): cv.boolean,
         cv.Optional(CONF_ADAPTIVE_THRESHOLD, default=True): cv.boolean,
+        cv.Optional(CONF_THRESHOLD, default=6): cv.positive_int,
         cv.Optional(CONF_SIGMA_MULTIPLIER, default=3.0): cv.float_,
         cv.Optional(CONF_BASELINE_RISE_TIME, default="10min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BASELINE_FALL_TIME, default="60min"): cv.positive_time_period_milliseconds,
@@ -56,6 +58,7 @@ async def to_code(config):
     cg.add(var.set_algorithm(config[CONF_ALGORITHM]))
     cg.add(var.set_gain_compensation_enabled(config[CONF_GAIN_COMPENSATION]))
     cg.add(var.set_adaptive_threshold_enabled(config[CONF_ADAPTIVE_THRESHOLD]))
+    cg.add(var.set_fixed_threshold(config[CONF_THRESHOLD]))
     cg.add(var.set_sigma_multiplier(config[CONF_SIGMA_MULTIPLIER]))
     cg.add(var.set_baseline_rise_time(config[CONF_BASELINE_RISE_TIME].total_milliseconds))
     cg.add(var.set_baseline_fall_time(config[CONF_BASELINE_FALL_TIME].total_milliseconds))
