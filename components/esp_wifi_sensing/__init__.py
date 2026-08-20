@@ -14,6 +14,9 @@ CONF_DEBOUNCE = "debounce"
 CONF_WARMUP_TIME = "warmup_time"
 CONF_MOTION_HOLD_TIME = "motion_hold_time"
 CONF_PERSISTENCE = "persistence"
+CONF_MOTION_SENSITIVITY = "motion_sensitivity"
+CONF_ACTIVE_JITTER_MIN = "active_jitter_min"
+CONF_ACTIVE_FILTER_MS = "active_filter_ms"
 
 DEPENDENCIES = ["wifi"]
 
@@ -25,6 +28,7 @@ ALGORITHMS = {
     "variance": CsiAlgorithm.VARIANCE,
     "amplitude": CsiAlgorithm.AMPLITUDE,
     "jitter": CsiAlgorithm.JITTER,
+    "esp_radar": CsiAlgorithm.ESP_RADAR,
 }
 
 CONFIG_SCHEMA = cv.Schema(
@@ -42,6 +46,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_WARMUP_TIME, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_MOTION_HOLD_TIME, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_PERSISTENCE, default=7): cv.int_range(min=1, max=10),
+        cv.Optional(CONF_MOTION_SENSITIVITY, default=0.5): cv.float_range(min=0.05, max=1.0),
+        cv.Optional(CONF_ACTIVE_JITTER_MIN, default=0.05): cv.float_range(min=0.0, max=1.0),
+        cv.Optional(CONF_ACTIVE_FILTER_MS, default="500ms"): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -61,5 +68,8 @@ async def to_code(config):
     cg.add(var.set_warmup_time(config[CONF_WARMUP_TIME].total_milliseconds))
     cg.add(var.set_motion_hold_time(config[CONF_MOTION_HOLD_TIME].total_milliseconds))
     cg.add(var.set_persistence_samples(config[CONF_PERSISTENCE]))
+    cg.add(var.set_motion_sensitivity(config[CONF_MOTION_SENSITIVITY]))
+    cg.add(var.set_active_jitter_min(config[CONF_ACTIVE_JITTER_MIN]))
+    cg.add(var.set_active_filter_ms(config[CONF_ACTIVE_FILTER_MS].total_milliseconds))
     if config[CONF_GAIN_COMPENSATION]:
         cg.add_define("USE_ESP_WIFI_SENSING_GAIN_COMPENSATION")
