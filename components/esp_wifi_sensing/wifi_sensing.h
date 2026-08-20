@@ -16,6 +16,7 @@
 #include "jitter_algorithm.h"
 #include "amplitude_algorithm.h"
 #include "adaptive_motion_detector.h"
+#include "esp_radar_motion_detector.h"
 #include "diagnostic_publish_rate_limiter.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
@@ -28,6 +29,7 @@ enum class CsiAlgorithm {
   VARIANCE,
   AMPLITUDE,
   JITTER,
+  ESP_RADAR,
 };
 
 class ESPWiFiSensing : public Component {
@@ -47,6 +49,9 @@ class ESPWiFiSensing : public Component {
   void set_warmup_time(uint32_t time_ms) { this->motion_detector_.set_warmup_time_ms(time_ms); }
   void set_motion_hold_time(uint32_t time_ms) { this->motion_detector_.set_motion_hold_time_ms(time_ms); }
   void set_persistence_samples(uint8_t samples) { this->motion_detector_.set_persistence_samples(samples); }
+  void set_motion_sensitivity(float value) { this->esp_radar_detector_.set_sensitivity(value); }
+  void set_active_jitter_min(float value) { this->esp_radar_detector_.set_active_jitter_min(value); }
+  void set_active_filter_ms(uint32_t value) { this->esp_radar_detector_.set_active_filter_ms(value); }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
   void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
   void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
@@ -55,7 +60,6 @@ class ESPWiFiSensing : public Component {
 
  protected:
   static void csi_callback_(void *ctx, wifi_csi_info_t *data);
-
   bool start_csi_();
   bool start_ping_();
 
@@ -89,6 +93,7 @@ class ESPWiFiSensing : public Component {
   CsiAmplitudeAlgorithm amplitude_algorithm_{};
   JitterAlgorithm jitter_algorithm_{};
   AdaptiveMotionDetector motion_detector_{};
+  EspRadarMotionDetector esp_radar_detector_{};
   DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
 
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
