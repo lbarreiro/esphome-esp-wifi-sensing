@@ -18,6 +18,8 @@ static const char *csi_algorithm_to_string(CsiAlgorithm algorithm) {
       return "amplitude";
     case CsiAlgorithm::JITTER:
       return "jitter";
+    case CsiAlgorithm::ESP_RADAR:
+      return "esp_radar";
     case CsiAlgorithm::ABSOLUTE_SUM:
     default:
       return "absolute_sum";
@@ -185,7 +187,10 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   uint32_t metric = 0;
   if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
     metric = self->variance_algorithm_.process(processed_packet);
-  } else if (self->selected_algorithm_ == CsiAlgorithm::AMPLITUDE) {
+  } else if (self->selected_algorithm_ == CsiAlgorithm::AMPLITUDE ||
+             self->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) {
+    // ESP_RADAR uses the amplitude metric as its CSI signal, then applies
+    // its own temporal-jitter FSM to that signal.
     metric = self->amplitude_algorithm_.process(processed_packet);
   } else if (self->selected_algorithm_ == CsiAlgorithm::JITTER) {
     metric = self->jitter_algorithm_.process(processed_packet);
@@ -242,24 +247,43 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
     self->diagnostic_last_log_time_ = timestamp;
   }
 
-  const AdaptiveMotionDetectorResult motion_result =
-      self->motion_detector_.update(metric, timestamp);
-
-  if (self->motion_binary_sensor_ != nullptr) {
-    self->motion_binary_sensor_->publish_state(motion_result.motion);
-  }
-  if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
-    if (self->metric_sensor_ != nullptr) {
-      self->metric_sensor_->publish_state(metric);
+  if (self->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) {
+    const EspRadarMotionResult radar_result = self->esp_radar_detector_.update(metric, timestamp);
+    if (self->motion_binary_sensor_ != nullptr) {
+      self->motion_binary_sensor_->publish_state(radar_result.active);
     }
-    if (self->baseline_mean_sensor_ != nullptr) {
-      self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
+    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
+      if (self->metric_sensor_ != nullptr) {
+        self->metric_sensor_->publish_state(metric);
+      }
+      if (self->baseline_mean_sensor_ != nullptr) {
+        self->baseline_mean_sensor_->publish_state(radar_result.smooth);
+      }
+      if (self->baseline_stddev_sensor_ != nullptr) {
+        self->baseline_stddev_sensor_->publish_state(radar_result.jitter);
+      }
+      if (self->adaptive_threshold_sensor_ != nullptr) {
+        self->adaptive_threshold_sensor_->publish_state(radar_result.enter_level);
+      }
     }
-    if (self->baseline_stddev_sensor_ != nullptr) {
-      self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
+  } else {
+    const AdaptiveMotionDetectorResult motion_result = self->motion_detector_.update(metric, timestamp);
+    if (self->motion_binary_sensor_ != nullptr) {
+      self->motion_binary_sensor_->publish_state(motion_result.motion);
     }
-    if (self->adaptive_threshold_sensor_ != nullptr) {
-      self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
+    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
+      if (self->metric_sensor_ != nullptr) {
+        self->metric_sensor_->publish_state(metric);
+      }
+      if (self->baseline_mean_sensor_ != nullptr) {
+        self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
+      }
+      if (self->baseline_stddev_sensor_ != nullptr) {
+        self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
+      }
+      if (self->adaptive_threshold_sensor_ != nullptr) {
+        self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
+      }
     }
   }
 
@@ -272,10 +296,8 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
   ESP_LOGCONFIG(TAG, "  Algorithm: %s", csi_algorithm_to_string(this->selected_algorithm_));
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
-  if (this->selected_algorithm_ == CsiAlgorithm::AMPLITUDE) {
-    ESP_LOGCONFIG(TAG, "  Amplitude metric: normalized per-subcarrier magnitude L1 distance (0..10000)");
-  } else if (this->selected_algorithm_ == CsiAlgorithm::JITTER) {
-    ESP_LOGCONFIG(TAG, "  Jitter metric: normalized temporal L1 distance (0..10000)");
+  if (this->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) {
+    ESP_LOGCONFIG(TAG, "  ESP Radar FSM: jitter + smooth + enter/exit hysteresis + active filter");
   }
 }
 
