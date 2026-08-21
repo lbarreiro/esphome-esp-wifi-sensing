@@ -16,6 +16,7 @@ static const char *csi_algorithm_to_string(CsiAlgorithm algorithm) {
     case CsiAlgorithm::AMPLITUDE: return "amplitude";
     case CsiAlgorithm::JITTER: return "jitter";
     case CsiAlgorithm::ESP_RADAR: return "esp_radar";
+    case CsiAlgorithm::MVS: return "mvs";
     case CsiAlgorithm::ABSOLUTE_SUM: default: return "absolute_sum";
   }
 }
@@ -60,7 +61,7 @@ void ESPWiFiSensing::loop() {
   const uint32_t current = this->csi_packet_count_;
   const uint32_t received = current - this->last_reported_count_;
   this->last_reported_count_ = current;
-  uint32_t average_variation = this->variation_samples_ > 0 ? this->variation_sum_ / this->variation_samples_ : 0;
+  const uint32_t average_variation = this->variation_samples_ > 0 ? this->variation_sum_ / this->variation_samples_ : 0;
   ESP_LOGI(TAG, "CSI: packets=%u/5s len=%u metric=%u variation avg=%u max=%u",
            static_cast<unsigned>(received), static_cast<unsigned>(this->latest_csi_len_),
            static_cast<unsigned>(this->latest_csi_metric_), static_cast<unsigned>(average_variation),
@@ -107,7 +108,7 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   uint32_t metric = 0;
   if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
     metric = self->variance_algorithm_.process(processed_packet);
-  } else if (self->selected_algorithm_ == CsiAlgorithm::AMPLITUDE || self->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) {
+  } else if (self->selected_algorithm_ == CsiAlgorithm::AMPLITUDE || self->selected_algorithm_ == CsiAlgorithm::ESP_RADAR || self->selected_algorithm_ == CsiAlgorithm::MVS) {
     metric = self->amplitude_algorithm_.process(processed_packet);
   } else if (self->selected_algorithm_ == CsiAlgorithm::JITTER) {
     metric = self->jitter_algorithm_.process(processed_packet);
@@ -151,6 +152,14 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
       if (self->csi_jitter_sensor_ != nullptr) self->csi_jitter_sensor_->publish_state(radar_result.jitter);
       if (self->csi_enter_level_sensor_ != nullptr) self->csi_enter_level_sensor_->publish_state(radar_result.enter_level);
     }
+  } else if (self->selected_algorithm_ == CsiAlgorithm::MVS) {
+    const MvsMotionResult mvs_result = self->mvs_detector_.update(metric, timestamp);
+    if (self->motion_binary_sensor_ != nullptr) self->motion_binary_sensor_->publish_state(mvs_result.active);
+    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
+      if (self->metric_sensor_ != nullptr) self->metric_sensor_->publish_state(metric);
+      if (self->csi_variance_sensor_ != nullptr) self->csi_variance_sensor_->publish_state(mvs_result.variance);
+      if (self->csi_variance_threshold_sensor_ != nullptr) self->csi_variance_threshold_sensor_->publish_state(mvs_result.threshold);
+    }
   } else {
     const AdaptiveMotionDetectorResult motion_result = self->motion_detector_.update(metric, timestamp);
     if (self->motion_binary_sensor_ != nullptr) self->motion_binary_sensor_->publish_state(motion_result.motion);
@@ -171,6 +180,7 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Algorithm: %s", csi_algorithm_to_string(this->selected_algorithm_));
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   if (this->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) ESP_LOGCONFIG(TAG, "  ESP Radar FSM: jitter + smooth + enter/exit hysteresis + active filter");
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS) ESP_LOGCONFIG(TAG, "  MVS: rolling variance + quiet baseline + hysteresis + consecutive hits");
 }
 
 }  // namespace esp_wifi_sensing
