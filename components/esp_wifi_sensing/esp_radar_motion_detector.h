@@ -18,6 +18,7 @@ class EspRadarMotionDetector {
   void set_sensitivity(float value) { this->sensitivity_ = value; }
   void set_active_jitter_min(float value) { this->active_jitter_min_ = value; }
   void set_active_filter_ms(uint32_t value) { this->active_filter_ms_ = value; }
+  void set_motion_hold_time_ms(uint32_t value) { this->motion_hold_time_ms_ = value; }
 
   EspRadarMotionResult update(uint32_t metric, uint32_t now_ms) {
     const float x = static_cast<float>(metric);
@@ -33,15 +34,12 @@ class EspRadarMotionDetector {
     const uint32_t dt = now_ms - this->last_update_ms_;
     this->last_update_ms_ = now_ms;
 
-    // Fast exponential smoothing. Higher sensitivity means less smoothing.
     const float alpha = 0.15f + (this->sensitivity_ * 0.45f);
     this->smooth_ += alpha * (x - this->smooth_);
 
     this->jitter_ = std::fabs(this->smooth_ - this->previous_smooth_);
     this->previous_smooth_ = this->smooth_;
 
-    // Track the quiet-state level only while inactive. This prevents active
-    // movement from immediately moving the entry threshold upwards.
     if (!this->active_) {
       const float quiet_alpha = dt >= 1000 ? 0.08f : 0.03f;
       this->quiet_level_ += quiet_alpha * (this->jitter_ - this->quiet_level_);
@@ -57,12 +55,18 @@ class EspRadarMotionDetector {
         if (this->active_accumulated_ms_ >= this->active_filter_ms_) {
           this->active_ = true;
           this->inactive_accumulated_ms_ = 0;
+          this->motion_hold_until_ms_ = now_ms + this->motion_hold_time_ms_;
         }
       } else {
         this->active_accumulated_ms_ = 0;
       }
     } else {
-      if (this->jitter_ <= exit_level) {
+      // Keep motion ON for the configured visualisation/hold period after
+      // activation. Once the hold expires, the normal EXIT hysteresis can
+      // return the detector to INACTIVE.
+      if (static_cast<int32_t>(now_ms - this->motion_hold_until_ms_) < 0) {
+        this->inactive_accumulated_ms_ = 0;
+      } else if (this->jitter_ <= exit_level) {
         this->inactive_accumulated_ms_ += dt;
         if (this->inactive_accumulated_ms_ >= this->active_filter_ms_) {
           this->active_ = false;
@@ -92,9 +96,11 @@ class EspRadarMotionDetector {
   float sensitivity_{0.5f};
   float active_jitter_min_{0.05f};
   uint32_t active_filter_ms_{500};
+  uint32_t motion_hold_time_ms_{60000};
   uint32_t last_update_ms_{0};
   uint32_t active_accumulated_ms_{0};
   uint32_t inactive_accumulated_ms_{0};
+  uint32_t motion_hold_until_ms_{0};
   float smooth_{0.0f};
   float previous_smooth_{0.0f};
   float jitter_{0.0f};
