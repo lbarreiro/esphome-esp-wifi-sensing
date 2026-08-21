@@ -12,6 +12,8 @@ CONF_BASELINE_STDDEV = "baseline_stddev"
 CONF_ADAPTIVE_THRESHOLD = "adaptive_threshold"
 CONF_CSI_JITTER = "csi_jitter"
 CONF_CSI_ENTER_LEVEL = "csi_enter_level"
+CONF_CSI_VARIANCE = "csi_variance"
+CONF_CSI_VARIANCE_THRESHOLD = "csi_variance_threshold"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -22,6 +24,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ADAPTIVE_THRESHOLD): sensor.sensor_schema(accuracy_decimals=2, state_class=STATE_CLASS_MEASUREMENT),
         cv.Optional(CONF_CSI_JITTER): sensor.sensor_schema(accuracy_decimals=3, state_class=STATE_CLASS_MEASUREMENT),
         cv.Optional(CONF_CSI_ENTER_LEVEL): sensor.sensor_schema(accuracy_decimals=3, state_class=STATE_CLASS_MEASUREMENT),
+        cv.Optional(CONF_CSI_VARIANCE): sensor.sensor_schema(accuracy_decimals=2, state_class=STATE_CLASS_MEASUREMENT),
+        cv.Optional(CONF_CSI_VARIANCE_THRESHOLD): sensor.sensor_schema(accuracy_decimals=2, state_class=STATE_CLASS_MEASUREMENT),
     }
 )
 
@@ -45,3 +49,9 @@ async def to_code(config):
     if CONF_CSI_ENTER_LEVEL in config:
         sens = await sensor.new_sensor(config[CONF_CSI_ENTER_LEVEL])
         cg.add(parent.set_csi_enter_level_sensor(sens))
+    if CONF_CSI_VARIANCE in config:
+        sens = await sensor.new_sensor(config[CONF_CSI_VARIANCE])
+        cg.add(parent.set_csi_variance_sensor(sens))
+    if CONF_CSI_VARIANCE_THRESHOLD in config:
+        sens = await sensor.new_sensor(config[CONF_CSI_VARIANCE_THRESHOLD])
+        cg.add(parent.set_csi_variance_threshold_sensor(sens))
