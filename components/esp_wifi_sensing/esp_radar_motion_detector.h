@@ -19,6 +19,7 @@ class EspRadarMotionDetector {
   void set_active_jitter_min(float value) { this->active_jitter_min_ = value; }
   void set_active_filter_ms(uint32_t value) { this->active_filter_ms_ = value; }
   void set_motion_hold_time_ms(uint32_t value) { this->motion_hold_time_ms_ = value; }
+  void set_enter_multiplier(float value) { this->enter_multiplier_ = value; }
 
   EspRadarMotionResult update(uint32_t metric, uint32_t now_ms) {
     const float x = static_cast<float>(metric);
@@ -50,7 +51,8 @@ class EspRadarMotionDetector {
     const float exit_level = enter_level * 0.55f;
 
     if (!this->active_) {
-      if (this->jitter_ >= enter_level && this->jitter_ >= this->active_jitter_min_) {
+      const float required_level = enter_level * this->enter_multiplier_;
+      if (this->jitter_ >= required_level && this->jitter_ >= this->active_jitter_min_) {
         this->active_accumulated_ms_ += dt;
         if (this->active_accumulated_ms_ >= this->active_filter_ms_) {
           this->active_ = true;
@@ -61,9 +63,6 @@ class EspRadarMotionDetector {
         this->active_accumulated_ms_ = 0;
       }
     } else {
-      // Keep motion ON for the configured visualisation/hold period after
-      // activation. Once the hold expires, the normal EXIT hysteresis can
-      // return the detector to INACTIVE.
       if (static_cast<int32_t>(now_ms - this->motion_hold_until_ms_) < 0) {
         this->inactive_accumulated_ms_ = 0;
       } else if (this->jitter_ <= exit_level) {
@@ -87,7 +86,7 @@ class EspRadarMotionDetector {
     result.active = this->active_;
     result.smooth = this->smooth_;
     result.jitter = this->jitter_;
-    result.enter_level = this->last_enter_level_;
+    result.enter_level = this->last_enter_level_ * this->enter_multiplier_;
     return result;
   }
 
@@ -95,6 +94,7 @@ class EspRadarMotionDetector {
   bool active_{false};
   float sensitivity_{0.5f};
   float active_jitter_min_{0.05f};
+  float enter_multiplier_{1.0f};
   uint32_t active_filter_ms_{500};
   uint32_t motion_hold_time_ms_{60000};
   uint32_t last_update_ms_{0};
