@@ -18,6 +18,10 @@ CONF_MOTION_SENSITIVITY = "motion_sensitivity"
 CONF_ACTIVE_JITTER_MIN = "active_jitter_min"
 CONF_ACTIVE_FILTER_MS = "active_filter_ms"
 CONF_ENTER_MULTIPLIER = "enter_multiplier"
+CONF_MVS_WINDOW = "mvs_window"
+CONF_MVS_THRESHOLD_MULTIPLIER = "mvs_threshold_multiplier"
+CONF_MVS_ENTER_HITS = "mvs_enter_hits"
+CONF_MVS_EXIT_HITS = "mvs_exit_hits"
 
 DEPENDENCIES = ["wifi"]
 
@@ -30,6 +34,7 @@ ALGORITHMS = {
     "amplitude": CsiAlgorithm.AMPLITUDE,
     "jitter": CsiAlgorithm.JITTER,
     "esp_radar": CsiAlgorithm.ESP_RADAR,
+    "mvs": CsiAlgorithm.MVS,
 }
 
 CONFIG_SCHEMA = cv.Schema(
@@ -51,9 +56,12 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ACTIVE_JITTER_MIN, default=0.05): cv.float_range(min=0.0, max=1.0),
         cv.Optional(CONF_ACTIVE_FILTER_MS, default="500ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_ENTER_MULTIPLIER, default=1.2): cv.float_range(min=1.0, max=5.0),
+        cv.Optional(CONF_MVS_WINDOW, default=32): cv.int_range(min=8, max=64),
+        cv.Optional(CONF_MVS_THRESHOLD_MULTIPLIER, default=2.0): cv.float_range(min=1.05, max=10.0),
+        cv.Optional(CONF_MVS_ENTER_HITS, default=2): cv.int_range(min=1, max=10),
+        cv.Optional(CONF_MVS_EXIT_HITS, default=2): cv.int_range(min=1, max=10),
     }
 ).extend(cv.COMPONENT_SCHEMA)
-
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
@@ -74,5 +82,9 @@ async def to_code(config):
     cg.add(var.set_active_jitter_min(config[CONF_ACTIVE_JITTER_MIN]))
     cg.add(var.set_active_filter_ms(config[CONF_ACTIVE_FILTER_MS].total_milliseconds))
     cg.add(var.set_enter_multiplier(config[CONF_ENTER_MULTIPLIER]))
+    cg.add(var.set_mvs_window(config[CONF_MVS_WINDOW]))
+    cg.add(var.set_mvs_threshold_multiplier(config[CONF_MVS_THRESHOLD_MULTIPLIER]))
+    cg.add(var.set_mvs_enter_hits(config[CONF_MVS_ENTER_HITS]))
+    cg.add(var.set_mvs_exit_hits(config[CONF_MVS_EXIT_HITS]))
     if config[CONF_GAIN_COMPENSATION]:
         cg.add_define("USE_ESP_WIFI_SENSING_GAIN_COMPENSATION")
