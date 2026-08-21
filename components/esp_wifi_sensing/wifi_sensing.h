@@ -1,13 +1,10 @@
 #pragma once
 
 #include <cstdint>
-
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
-
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
-
 #include "espidf_csi_driver.h"
 #include "csi_pipeline.h"
 #include "csi_packet.h"
@@ -21,87 +18,54 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 
-namespace esphome {
-namespace esp_wifi_sensing {
+namespace esphome { namespace esp_wifi_sensing {
 
-enum class CsiAlgorithm {
-  ABSOLUTE_SUM,
-  VARIANCE,
-  AMPLITUDE,
-  JITTER,
-  ESP_RADAR,
-};
+enum class CsiAlgorithm { ABSOLUTE_SUM, VARIANCE, AMPLITUDE, JITTER, ESP_RADAR };
 
 class ESPWiFiSensing : public Component {
  public:
-  void setup() override;
-  void loop() override;
-  void dump_config() override;
+  void setup() override; void loop() override; void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
-  void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
-  void set_adaptive_threshold_enabled(bool enabled) { this->motion_detector_.set_adaptive_threshold_enabled(enabled); }
-  void set_fixed_threshold(uint32_t threshold) { this->motion_detector_.set_fixed_threshold(threshold); }
-  void set_sigma_multiplier(float multiplier) { this->motion_detector_.set_sigma_multiplier(multiplier); }
-  void set_baseline_rise_time(uint32_t time_ms) { this->motion_detector_.set_baseline_rise_time_ms(time_ms); }
-  void set_baseline_fall_time(uint32_t time_ms) { this->motion_detector_.set_baseline_fall_time_ms(time_ms); }
-  void set_learning_delay(uint32_t time_ms) { this->motion_detector_.set_learning_delay_ms(time_ms); }
-  void set_debounce(uint32_t samples) { this->motion_detector_.set_debounce_samples(samples); }
-  void set_warmup_time(uint32_t time_ms) { this->motion_detector_.set_warmup_time_ms(time_ms); }
-  void set_motion_hold_time(uint32_t time_ms) { this->motion_detector_.set_motion_hold_time_ms(time_ms); }
-  void set_persistence_samples(uint8_t samples) { this->motion_detector_.set_persistence_samples(samples); }
-  void set_motion_sensitivity(float value) { this->esp_radar_detector_.set_sensitivity(value); }
-  void set_active_jitter_min(float value) { this->esp_radar_detector_.set_active_jitter_min(value); }
-  void set_active_filter_ms(uint32_t value) { this->esp_radar_detector_.set_active_filter_ms(value); }
-  void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
-  void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
-  void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
-  void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
-  void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
-
+  void set_algorithm(CsiAlgorithm algorithm) { selected_algorithm_ = algorithm; }
+  void set_adaptive_threshold_enabled(bool enabled) { motion_detector_.set_adaptive_threshold_enabled(enabled); }
+  void set_fixed_threshold(uint32_t threshold) { motion_detector_.set_fixed_threshold(threshold); }
+  void set_sigma_multiplier(float multiplier) { motion_detector_.set_sigma_multiplier(multiplier); }
+  void set_baseline_rise_time(uint32_t v) { motion_detector_.set_baseline_rise_time_ms(v); }
+  void set_baseline_fall_time(uint32_t v) { motion_detector_.set_baseline_fall_time_ms(v); }
+  void set_learning_delay(uint32_t v) { motion_detector_.set_learning_delay_ms(v); }
+  void set_debounce(uint32_t v) { motion_detector_.set_debounce_samples(v); }
+  void set_warmup_time(uint32_t v) { motion_detector_.set_warmup_time_ms(v); }
+  void set_motion_hold_time(uint32_t v) { motion_detector_.set_motion_hold_time_ms(v); }
+  void set_persistence_samples(uint8_t v) { motion_detector_.set_persistence_samples(v); }
+  void set_motion_sensitivity(float v) { esp_radar_detector_.set_sensitivity(v); }
+  void set_active_jitter_min(float v) { esp_radar_detector_.set_active_jitter_min(v); }
+  void set_active_filter_ms(uint32_t v) { esp_radar_detector_.set_active_filter_ms(v); }
+  void set_motion_binary_sensor(binary_sensor::BinarySensor *v) { motion_binary_sensor_ = v; }
+  void set_metric_sensor(sensor::Sensor *v) { metric_sensor_ = v; }
+  void set_baseline_mean_sensor(sensor::Sensor *v) { baseline_mean_sensor_ = v; }
+  void set_baseline_stddev_sensor(sensor::Sensor *v) { baseline_stddev_sensor_ = v; }
+  void set_adaptive_threshold_sensor(sensor::Sensor *v) { adaptive_threshold_sensor_ = v; }
+  void set_csi_jitter_sensor(sensor::Sensor *v) { csi_jitter_sensor_ = v; }
+  void set_csi_enter_level_sensor(sensor::Sensor *v) { csi_enter_level_sensor_ = v; }
  protected:
   static void csi_callback_(void *ctx, wifi_csi_info_t *data);
-  bool start_csi_();
-  bool start_ping_();
-
-  volatile uint32_t csi_packet_count_{0};
-  volatile uint32_t latest_csi_metric_{0};
-  volatile uint16_t latest_csi_len_{0};
-  volatile bool new_csi_sample_{false};
-
-  uint32_t previous_csi_metric_{0};
-  bool have_previous_sample_{false};
-  uint32_t diagnostic_previous_csi_metric_{0};
-  bool diagnostic_have_previous_sample_{false};
-  uint32_t diagnostic_last_log_time_{0};
-  uint32_t variation_sum_{0};
-  uint32_t variation_max_{0};
-  uint32_t variation_samples_{0};
-  uint32_t last_reported_count_{0};
-  uint32_t last_report_time_{0};
-
-  bool csi_started_{false};
-  bool ping_started_{false};
-  bool gain_compensation_enabled_{false};
+  bool start_csi_(); bool start_ping_();
+  volatile uint32_t csi_packet_count_{0}, latest_csi_metric_{0};
+  volatile uint16_t latest_csi_len_{0}; volatile bool new_csi_sample_{false};
+  uint32_t previous_csi_metric_{0}, diagnostic_previous_csi_metric_{0};
+  bool have_previous_sample_{false}, diagnostic_have_previous_sample_{false};
+  uint32_t diagnostic_last_log_time_{0}, variation_sum_{0}, variation_max_{0}, variation_samples_{0};
+  uint32_t last_reported_count_{0}, last_report_time_{0};
+  bool csi_started_{false}, ping_started_{false}, gain_compensation_enabled_{false};
   CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
-
   esp_ping_handle_t ping_handle_{nullptr};
-
-  EspIdfCsiDriver driver_{};
-  CsiPipeline pipeline_{};
-  ThresholdAlgorithm algorithm_{};
-  VarianceAlgorithm variance_algorithm_{};
-  CsiAmplitudeAlgorithm amplitude_algorithm_{};
-  JitterAlgorithm jitter_algorithm_{};
-  AdaptiveMotionDetector motion_detector_{};
-  EspRadarMotionDetector esp_radar_detector_{};
-  DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
-
+  EspIdfCsiDriver driver_{}; CsiPipeline pipeline_{}; ThresholdAlgorithm algorithm_{};
+  VarianceAlgorithm variance_algorithm_{}; CsiAmplitudeAlgorithm amplitude_algorithm_{}; JitterAlgorithm jitter_algorithm_{};
+  AdaptiveMotionDetector motion_detector_{}; EspRadarMotionDetector esp_radar_detector_{}; DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
-  sensor::Sensor *metric_sensor_{nullptr};
-  sensor::Sensor *baseline_mean_sensor_{nullptr};
-  sensor::Sensor *baseline_stddev_sensor_{nullptr};
-  sensor::Sensor *adaptive_threshold_sensor_{nullptr};
+  sensor::Sensor *metric_sensor_{nullptr}; sensor::Sensor *baseline_mean_sensor_{nullptr};
+  sensor::Sensor *baseline_stddev_sensor_{nullptr}; sensor::Sensor *adaptive_threshold_sensor_{nullptr};
+  sensor::Sensor *csi_jitter_sensor_{nullptr}; sensor::Sensor *csi_enter_level_sensor_{nullptr};
 };
 
-}  // namespace esp_wifi_sensing
-}  // namespace esphome
+} }
