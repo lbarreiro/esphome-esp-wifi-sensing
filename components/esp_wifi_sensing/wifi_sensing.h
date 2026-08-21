@@ -40,6 +40,7 @@ class ESPWiFiSensing : public Component {
   void set_motion_sensitivity(float v) { esp_radar_detector_.set_sensitivity(v); }
   void set_active_jitter_min(float v) { esp_radar_detector_.set_active_jitter_min(v); }
   void set_active_filter_ms(uint32_t v) { esp_radar_detector_.set_active_filter_ms(v); }
+  void set_enter_multiplier(float v) { esp_radar_detector_.set_enter_multiplier(v); }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *v) { motion_binary_sensor_ = v; }
   void set_metric_sensor(sensor::Sensor *v) { metric_sensor_ = v; }
   void set_baseline_mean_sensor(sensor::Sensor *v) { baseline_mean_sensor_ = v; }
