@@ -15,7 +15,8 @@ struct MvsMotionResult {
 
 // Windowed variance detector inspired by the temporal-statistics approach of
 // ESPectre MVS, but implemented independently for this CSI metric stream.
-// The key rule is that the quiet baseline is learned only from QUIET windows.
+// The quiet baseline is learned only from quiet windows and a completed
+// motion window is discarded before the detector can re-arm.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -26,6 +27,7 @@ class MvsMotionDetector {
 
   MvsMotionResult update(uint32_t metric, uint32_t now_ms) {
     const float x = static_cast<float>(metric);
+
     if (this->count_ < kMaxWindow) {
       this->window_[this->count_++] = x;
     } else {
@@ -49,7 +51,6 @@ class MvsMotionDetector {
     variance /= static_cast<float>(n);
     this->variance_ = variance;
 
-    // The first valid window establishes the initial quiet reference.
     if (!this->baseline_initialized_) {
       this->baseline_ = variance;
       this->baseline_initialized_ = true;
@@ -62,9 +63,8 @@ class MvsMotionDetector {
     this->threshold_ = enter_threshold;
 
     if (!this->active_) {
-      // IMPORTANT: baseline learning is allowed only while the current
-      // window is clearly quiet. A motion window can therefore never raise
-      // its own entry threshold and hide the motion that caused it.
+      // Learn the quiet environment only when the complete current window is
+      // below the entry threshold. Motion cannot raise its own threshold.
       if (variance < enter_threshold) {
         this->baseline_ += this->baseline_alpha_ * (variance - this->baseline_);
         this->enter_count_ = 0;
@@ -76,19 +76,23 @@ class MvsMotionDetector {
           this->enter_count_ = 0;
         }
       }
-    } else {
-      // Hold is deliberately independent of the variance so that the HA
-      // visualisation gets a stable 60-second ON period.
-      if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-        if (variance < exit_threshold) {
-          this->exit_count_++;
-          if (this->exit_count_ >= this->exit_hits_) {
-            this->active_ = false;
-            this->exit_count_ = 0;
-          }
-        } else {
+    } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
+      if (variance < exit_threshold) {
+        this->exit_count_++;
+        if (this->exit_count_ >= this->exit_hits_) {
+          this->active_ = false;
           this->exit_count_ = 0;
+          this->enter_count_ = 0;
+
+          // Critical re-arm fix: do not leave the 32-sample motion window in
+          // place after OFF. Otherwise its old high-variance samples survive
+          // the 60 s hold and immediately satisfy the entry condition again.
+          this->count_ = 0;
+          this->variance_ = 0.0f;
+          this->threshold_ = this->threshold_for_baseline_();
         }
+      } else {
+        this->exit_count_ = 0;
       }
     }
 
