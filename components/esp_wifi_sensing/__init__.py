@@ -50,7 +50,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MOTION_SENSITIVITY, default=0.5): cv.float_range(min=0.05, max=1.0),
         cv.Optional(CONF_ACTIVE_JITTER_MIN, default=0.05): cv.float_range(min=0.0, max=1.0),
         cv.Optional(CONF_ACTIVE_FILTER_MS, default="500ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_ENTER_MULTIPLIER, default=1.0): cv.float_range(min=1.0, max=5.0),
+        cv.Optional(CONF_ENTER_MULTIPLIER, default=1.2): cv.float_range(min=1.0, max=5.0),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
