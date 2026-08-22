@@ -14,10 +14,9 @@ struct MvsMotionResult {
   float baseline{0.0f};
 };
 
-// Windowed variance detector using a statistically calibrated quiet baseline.
-// Calibration is deliberately long and sampled at 1 Hz so the startup
-// threshold represents the real environmental noise floor rather than a few
-// initial CSI windows.
+// Windowed variance detector with a time-based quiet calibration and an
+// explicit quiet re-arm period. CSI callbacks may run much faster than 1 Hz;
+// calibration therefore samples the calculated variance at 1 Hz internally.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -51,16 +50,16 @@ class MvsMotionDetector {
     variance /= static_cast<float>(n);
     this->variance_ = variance;
 
-    // Calibration is time based, not update-count based. The detector may be
-    // fed much faster than the 1 Hz diagnostic sensors, so counting calls
-    // would make the calibration finish almost immediately.
+    // 5-minute calibration, sampled at 1 Hz. The calibration is independent
+    // of the CSI callback rate and cannot finish after only a few callbacks.
     if (!this->calibrated_) {
+      if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
+
       if (this->last_calibration_sample_ms_ == 0 ||
           static_cast<uint32_t>(now_ms - this->last_calibration_sample_ms_) >= kCalibrationSampleMs) {
         this->last_calibration_sample_ms_ = now_ms;
-        if (this->calibration_count_ < kMaxCalibrationSamples) {
+        if (this->calibration_count_ < kMaxCalibrationSamples)
           this->calibration_values_[this->calibration_count_++] = variance;
-        }
       }
 
       if (static_cast<uint32_t>(now_ms - this->calibration_start_ms_) >= kCalibrationDurationMs &&
@@ -71,23 +70,38 @@ class MvsMotionDetector {
     }
 
     const float enter_threshold = this->threshold_for_baseline_();
-    // Hysteresis: exit is deliberately below the entry level.
     const float exit_threshold = this->baseline_ + this->variance_stddev_ *
         std::fmax(0.5f, this->sigma_multiplier_ * 0.60f);
     this->threshold_ = enter_threshold;
 
     if (!this->active_) {
-      if (variance <= enter_threshold) {
-        // Slow adaptation only from quiet observations.
-        this->baseline_ += this->baseline_alpha_ * (variance - this->baseline_);
-        this->enter_count_ = 0;
-      } else {
+      if (this->rearm_required_) {
+        // Do not allow an immediate re-trigger after the 60 s hold. We require
+        // 10 consecutive seconds below the exit threshold first.
+        if (variance <= exit_threshold) {
+          this->quiet_rearm_count_++;
+          if (this->quiet_rearm_count_ >= kQuietRearmSamples) {
+            this->rearm_required_ = false;
+            this->quiet_rearm_count_ = 0;
+          }
+        } else {
+          this->quiet_rearm_count_ = 0;
+        }
+        return this->result_();
+      }
+
+      if (variance > enter_threshold) {
         this->enter_count_++;
         if (this->enter_count_ >= this->enter_hits_) {
           this->active_ = true;
           this->hold_until_ms_ = now_ms + this->hold_time_ms_;
           this->enter_count_ = 0;
         }
+      } else {
+        this->enter_count_ = 0;
+        // Adapt the quiet baseline only when comfortably below the exit level.
+        if (variance <= exit_threshold)
+          this->baseline_ += this->baseline_alpha_ * (variance - this->baseline_);
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
       if (variance <= exit_threshold) {
@@ -96,6 +110,8 @@ class MvsMotionDetector {
           this->active_ = false;
           this->exit_count_ = 0;
           this->enter_count_ = 0;
+          this->rearm_required_ = true;
+          this->quiet_rearm_count_ = 0;
           this->count_ = 0;
           this->variance_ = 0.0f;
         }
@@ -109,9 +125,8 @@ class MvsMotionDetector {
 
  private:
   void finish_calibration_() {
-    // Ignore the highest 10% of calibration windows. This prevents an
-    // occasional movement during startup from becoming part of the normal
-    // noise floor and pushing the threshold upwards.
+    // Remove the highest 10% of calibration windows. The remaining 90% are
+    // treated as the quiet distribution used to establish the noise floor.
     std::sort(this->calibration_values_,
               this->calibration_values_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
@@ -126,12 +141,19 @@ class MvsMotionDetector {
       sum_sq += d * d;
     }
     this->variance_stddev_ = std::sqrt(sum_sq / static_cast<float>(usable > 1 ? usable - 1 : 1));
+
+    // Use the observed quiet 99th percentile as a floor for the threshold.
+    // This is important for CSI noise, which is not necessarily Gaussian.
+    const uint16_t p99_index = static_cast<uint16_t>((usable - 1) * 0.99f);
+    this->quiet_p99_ = this->calibration_values_[p99_index];
+
     this->calibrated_ = true;
     this->threshold_ = this->threshold_for_baseline_();
   }
 
   float threshold_for_baseline_() const {
-    return std::fmax(this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_, 1.0f);
+    return std::fmax(this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_,
+                     this->quiet_p99_);
   }
 
   MvsMotionResult result_() const {
@@ -145,9 +167,10 @@ class MvsMotionDetector {
 
   static constexpr uint16_t kMaxWindow = 64;
   static constexpr uint16_t kMaxCalibrationSamples = 360;
-  static constexpr uint16_t kMinimumCalibrationSamples = 120;
-  static constexpr uint32_t kCalibrationDurationMs = 300000;  // 5 minutes
-  static constexpr uint32_t kCalibrationSampleMs = 1000;      // 1 Hz
+  static constexpr uint16_t kMinimumCalibrationSamples = 240;
+  static constexpr uint32_t kCalibrationDurationMs = 300000;
+  static constexpr uint32_t kCalibrationSampleMs = 1000;
+  static constexpr uint16_t kQuietRearmSamples = 10;
 
   float window_[kMaxWindow]{};
   uint16_t count_{0};
@@ -158,11 +181,8 @@ class MvsMotionDetector {
   uint32_t calibration_start_ms_{0};
   uint32_t last_calibration_sample_ms_{0};
 
-  // Kept under the existing YAML name mvs_threshold_multiplier, but it is a
-  // sigma multiplier: threshold = baseline + sigma * multiplier.
   float sigma_multiplier_{2.0f};
-  float baseline_alpha_{0.01f};
-
+  float baseline_alpha_{0.005f};
   uint8_t enter_hits_{2};
   uint8_t exit_hits_{2};
   uint8_t enter_count_{0};
@@ -173,7 +193,10 @@ class MvsMotionDetector {
 
   bool active_{false};
   bool calibrated_{false};
+  bool rearm_required_{false};
+  uint16_t quiet_rearm_count_{0};
 
+  float quiet_p99_{0.0f};
   float variance_stddev_{0.0f};
   float baseline_{0.0f};
   float variance_{0.0f};
