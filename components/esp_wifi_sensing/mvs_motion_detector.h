@@ -14,10 +14,13 @@ struct MvsMotionResult {
   float baseline{0.0f};
 };
 
-// Temporal CSI motion detector. The detector deliberately keeps the existing
-// MVS/variance signal as a diagnostic, but the motion decision is now based on
-// the SHAPE of the signal: energy above the quiet floor, persistence, and a
-// recovery period. A 60 s hold is presentation-only and never feeds detection.
+// MVS-style temporal motion detector.
+//
+// The CSI variance remains the diagnostic signal, but the decision is made
+// from a 1 Hz temporal envelope instead of raw CSI callback frequency.
+// A motion event is a change in the variance pattern (3 of the last 5
+// one-second samples above the robust noise threshold), not a single spike.
+// The 60 s hold is presentation-only.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -28,8 +31,9 @@ class MvsMotionDetector {
 
   MvsMotionResult update(uint32_t metric, uint32_t now_ms) {
     const float x = static_cast<float>(metric);
-    if (this->count_ < kMaxWindow) this->window_[this->count_++] = x;
-    else {
+    if (this->count_ < kMaxWindow) {
+      this->window_[this->count_++] = x;
+    } else {
       for (uint16_t i = 1; i < kMaxWindow; ++i) this->window_[i - 1] = this->window_[i];
       this->window_[kMaxWindow - 1] = x;
     }
@@ -50,13 +54,12 @@ class MvsMotionDetector {
     variance /= static_cast<float>(n);
     this->variance_ = variance;
 
-    // Five-minute, 1 Hz quiet calibration. Only the lower 90% is used so an
-    // occasional event during startup cannot become the noise floor.
+    // Calibration is explicitly time based: one decision sample per second.
+    // This is independent of how many CSI callbacks arrive per second.
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
-      if (this->last_calibration_sample_ms_ == 0 ||
-          static_cast<uint32_t>(now_ms - this->last_calibration_sample_ms_) >= 1000) {
-        this->last_calibration_sample_ms_ = now_ms;
+      if (this->last_1hz_ms_ == 0 || static_cast<uint32_t>(now_ms - this->last_1hz_ms_) >= 1000) {
+        this->last_1hz_ms_ = now_ms;
         if (this->calibration_count_ < kMaxCalibrationSamples)
           this->calibration_values_[this->calibration_count_++] = variance;
       }
@@ -67,15 +70,25 @@ class MvsMotionDetector {
       return this->result_();
     }
 
-    // Dynamic quiet floor. Threshold is diagnostic and remains visible in HA.
-    this->threshold_ = this->threshold_for_baseline_();
-    const float enter_level = this->threshold_;
-    const float exit_level = this->baseline_ + this->variance_stddev_ * 0.45f;
+    // All state-machine decisions happen at 1 Hz. This fixes the fundamental
+    // error where enter/exit persistence was previously measured in CSI
+    // callbacks rather than seconds.
+    if (this->last_1hz_ms_ != 0 && static_cast<uint32_t>(now_ms - this->last_1hz_ms_) < 1000)
+      return this->result_();
+    this->last_1hz_ms_ = now_ms;
 
-    // Compress excess energy into a dimensionless score. This is what the
-    // state machine uses instead of a single absolute variance crossing.
-    const float excess = std::fmax(0.0f, variance - enter_level);
-    const float score = excess / std::fmax(1.0f, enter_level);
+    this->threshold_ = this->threshold_for_baseline_();
+    const float exit_level = std::fmax(this->baseline_ + this->variance_stddev_ * 0.50f,
+                                       this->quiet_p99_ * 0.45f);
+
+    // Temporal envelope: classify this one-second sample against the robust
+    // noise floor. A very large excursion is worth two votes; normal excess
+    // energy is one vote. This catches real sustained movement while rejecting
+    // the isolated 1-second spikes visible in the audit data.
+    const float ratio = variance / std::fmax(1.0f, this->threshold_);
+    uint8_t vote = 0;
+    if (ratio >= kStrongRatio) vote = 2;
+    else if (ratio >= 1.0f) vote = 1;
 
     if (!this->active_) {
       if (this->rearm_required_) {
@@ -91,31 +104,34 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      // A single spike is not movement. Require a sustained energy pattern,
-      // and accumulate strength instead of counting raw CSI callbacks.
-      if (score >= kStrongScore) {
-        if (this->strong_seconds_ < kMaxStrongSeconds) ++this->strong_seconds_;
-      } else if (score >= kWeakScore) {
-        if (this->strong_seconds_ > 0) --this->strong_seconds_;
+      // Sliding 5-second vote window. Require >=3 votes. A strong excursion
+      // contributes two votes but still cannot trigger from one sample alone.
+      if (this->vote_count_ < kVoteWindow) {
+        this->votes_[this->vote_count_++] = vote;
       } else {
-        this->strong_seconds_ = 0;
+        for (uint8_t i = 1; i < kVoteWindow; ++i) this->votes_[i - 1] = this->votes_[i];
+        this->votes_[kVoteWindow - 1] = vote;
       }
 
-      if (this->strong_seconds_ >= kRequiredStrongSeconds) {
+      uint8_t votes = 0;
+      for (uint8_t i = 0; i < this->vote_count_; ++i) votes += this->votes_[i];
+
+      if (this->vote_count_ >= kVoteWindow && votes >= kRequiredVotes) {
         this->active_ = true;
         this->hold_until_ms_ = now_ms + this->hold_time_ms_;
-        this->strong_seconds_ = 0;
+        this->vote_count_ = 0;
+        for (auto &v : this->votes_) v = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-      // Once the presentation hold expires, OFF requires several quiet
-      // seconds. The signal itself, not the 60 s timer, decides recovery.
+      // OFF is based on actual quiet signal, not the end of the hold timer.
       if (variance <= exit_level) {
         if (this->exit_quiet_seconds_ < kExitQuietSeconds) ++this->exit_quiet_seconds_;
         if (this->exit_quiet_seconds_ >= kExitQuietSeconds) {
           this->active_ = false;
           this->rearm_required_ = true;
           this->exit_quiet_seconds_ = 0;
-          this->strong_seconds_ = 0;
+          this->vote_count_ = 0;
+          for (auto &v : this->votes_) v = 0;
         }
       } else {
         this->exit_quiet_seconds_ = 0;
@@ -127,8 +143,7 @@ class MvsMotionDetector {
 
  private:
   void finish_calibration_() {
-    std::sort(this->calibration_values_,
-              this->calibration_values_ + this->calibration_count_);
+    std::sort(this->calibration_values_, this->calibration_values_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
 
     float sum = 0.0f;
@@ -144,11 +159,13 @@ class MvsMotionDetector {
 
     const uint16_t p99_index = static_cast<uint16_t>((usable - 1) * 0.99f);
     this->quiet_p99_ = this->calibration_values_[p99_index];
-    this->calibrated_ = true;
     this->threshold_ = this->threshold_for_baseline_();
+    this->calibrated_ = true;
+    this->last_1hz_ms_ = 0;
   }
 
   float threshold_for_baseline_() const {
+    // Robust floor: sigma threshold cannot be below the observed quiet P99.
     return std::fmax(this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_,
                      this->quiet_p99_);
   }
@@ -166,12 +183,11 @@ class MvsMotionDetector {
   static constexpr uint16_t kMaxCalibrationSamples = 360;
   static constexpr uint16_t kMinimumCalibrationSamples = 240;
   static constexpr uint32_t kCalibrationDurationMs = 300000;
-  static constexpr uint16_t kRearmSeconds = 10;
-  static constexpr uint16_t kExitQuietSeconds = 5;
-  static constexpr uint16_t kRequiredStrongSeconds = 3;
-  static constexpr uint16_t kMaxStrongSeconds = 6;
-  static constexpr float kStrongScore = 0.50f;
-  static constexpr float kWeakScore = 0.20f;
+  static constexpr uint8_t kVoteWindow = 5;
+  static constexpr uint8_t kRequiredVotes = 3;
+  static constexpr float kStrongRatio = 1.75f;
+  static constexpr uint8_t kRearmSeconds = 10;
+  static constexpr uint8_t kExitQuietSeconds = 5;
 
   float window_[kMaxWindow]{};
   uint16_t count_{0};
@@ -180,15 +196,13 @@ class MvsMotionDetector {
   float calibration_values_[kMaxCalibrationSamples]{};
   uint16_t calibration_count_{0};
   uint32_t calibration_start_ms_{0};
-  uint32_t last_calibration_sample_ms_{0};
+  uint32_t last_1hz_ms_{0};
 
   float sigma_multiplier_{2.0f};
-  float baseline_alpha_{0.005f};
   uint8_t enter_hits_{2};
   uint8_t exit_hits_{2};
-  uint8_t strong_seconds_{0};
-  uint8_t exit_quiet_seconds_{0};
   uint8_t quiet_seconds_{0};
+  uint8_t exit_quiet_seconds_{0};
 
   uint32_t hold_time_ms_{60000};
   uint32_t hold_until_ms_{0};
@@ -196,6 +210,9 @@ class MvsMotionDetector {
   bool active_{false};
   bool calibrated_{false};
   bool rearm_required_{false};
+
+  uint8_t votes_[kVoteWindow]{};
+  uint8_t vote_count_{0};
 
   float quiet_p99_{0.0f};
   float variance_stddev_{0.0f};
