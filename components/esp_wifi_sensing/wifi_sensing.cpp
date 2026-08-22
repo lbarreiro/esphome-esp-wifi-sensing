@@ -159,6 +159,7 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
       if (self->metric_sensor_ != nullptr) self->metric_sensor_->publish_state(metric);
       if (self->csi_variance_sensor_ != nullptr) self->csi_variance_sensor_->publish_state(mvs_result.variance);
       if (self->csi_variance_threshold_sensor_ != nullptr) self->csi_variance_threshold_sensor_->publish_state(mvs_result.threshold);
+      if (self->csi_change_rate_sensor_ != nullptr) self->csi_change_rate_sensor_->publish_state(mvs_result.change_rate);
     }
   } else {
     const AdaptiveMotionDetectorResult motion_result = self->motion_detector_.update(metric, timestamp);
