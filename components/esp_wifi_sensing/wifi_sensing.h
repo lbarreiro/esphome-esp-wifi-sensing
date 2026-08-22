@@ -55,6 +55,7 @@ class ESPWiFiSensing : public Component {
   void set_csi_enter_level_sensor(sensor::Sensor *v) { csi_enter_level_sensor_ = v; }
   void set_csi_variance_sensor(sensor::Sensor *v) { csi_variance_sensor_ = v; }
   void set_csi_variance_threshold_sensor(sensor::Sensor *v) { csi_variance_threshold_sensor_ = v; }
+  void set_csi_change_rate_sensor(sensor::Sensor *v) { csi_change_rate_sensor_ = v; }
  protected:
   static void csi_callback_(void *ctx, wifi_csi_info_t *data);
   bool start_csi_(); bool start_ping_();
@@ -75,6 +76,7 @@ class ESPWiFiSensing : public Component {
   sensor::Sensor *baseline_stddev_sensor_{nullptr}; sensor::Sensor *adaptive_threshold_sensor_{nullptr};
   sensor::Sensor *csi_jitter_sensor_{nullptr}; sensor::Sensor *csi_enter_level_sensor_{nullptr};
   sensor::Sensor *csi_variance_sensor_{nullptr}; sensor::Sensor *csi_variance_threshold_sensor_{nullptr};
+  sensor::Sensor *csi_change_rate_sensor_{nullptr};
 };
 
 } }
