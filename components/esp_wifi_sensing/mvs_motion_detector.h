@@ -14,10 +14,10 @@ struct MvsMotionResult {
   float baseline{0.0f};
 };
 
-// Windowed variance detector with a time-based quiet calibration and
-// time-based state decisions. CSI callbacks can run much faster than 1 Hz;
-// motion persistence must therefore be measured in seconds, not callback
-// counts.
+// Temporal CSI motion detector. The detector deliberately keeps the existing
+// MVS/variance signal as a diagnostic, but the motion decision is now based on
+// the SHAPE of the signal: energy above the quiet floor, persistence, and a
+// recovery period. A 60 s hold is presentation-only and never feeds detection.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -28,39 +28,38 @@ class MvsMotionDetector {
 
   MvsMotionResult update(uint32_t metric, uint32_t now_ms) {
     const float x = static_cast<float>(metric);
-    if (this->count_ < kMaxWindow) {
-      this->window_[this->count_++] = x;
-    } else {
-      for (uint16_t i = 1; i < kMaxWindow; i++) this->window_[i - 1] = this->window_[i];
+    if (this->count_ < kMaxWindow) this->window_[this->count_++] = x;
+    else {
+      for (uint16_t i = 1; i < kMaxWindow; ++i) this->window_[i - 1] = this->window_[i];
       this->window_[kMaxWindow - 1] = x;
     }
 
-    const uint16_t n = this->count_ < this->window_samples_ ? this->count_ : this->window_samples_;
+    const uint16_t n = std::min<uint16_t>(this->count_, this->window_samples_);
     if (n < 8) return this->result_();
 
     float mean = 0.0f;
     const uint16_t start = this->count_ - n;
-    for (uint16_t i = start; i < this->count_; i++) mean += this->window_[i];
+    for (uint16_t i = start; i < this->count_; ++i) mean += this->window_[i];
     mean /= static_cast<float>(n);
 
     float variance = 0.0f;
-    for (uint16_t i = start; i < this->count_; i++) {
+    for (uint16_t i = start; i < this->count_; ++i) {
       const float d = this->window_[i] - mean;
       variance += d * d;
     }
     variance /= static_cast<float>(n);
     this->variance_ = variance;
 
+    // Five-minute, 1 Hz quiet calibration. Only the lower 90% is used so an
+    // occasional event during startup cannot become the noise floor.
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
-
       if (this->last_calibration_sample_ms_ == 0 ||
-          static_cast<uint32_t>(now_ms - this->last_calibration_sample_ms_) >= kCalibrationSampleMs) {
+          static_cast<uint32_t>(now_ms - this->last_calibration_sample_ms_) >= 1000) {
         this->last_calibration_sample_ms_ = now_ms;
         if (this->calibration_count_ < kMaxCalibrationSamples)
           this->calibration_values_[this->calibration_count_++] = variance;
       }
-
       if (static_cast<uint32_t>(now_ms - this->calibration_start_ms_) >= kCalibrationDurationMs &&
           this->calibration_count_ >= kMinimumCalibrationSamples) {
         this->finish_calibration_();
@@ -68,62 +67,58 @@ class MvsMotionDetector {
       return this->result_();
     }
 
-    const float enter_threshold = this->threshold_for_baseline_();
-    const float exit_threshold = this->baseline_ + this->variance_stddev_ *
-        std::fmax(0.5f, this->sigma_multiplier_ * 0.60f);
-    this->threshold_ = enter_threshold;
+    // Dynamic quiet floor. Threshold is diagnostic and remains visible in HA.
+    this->threshold_ = this->threshold_for_baseline_();
+    const float enter_level = this->threshold_;
+    const float exit_level = this->baseline_ + this->variance_stddev_ * 0.45f;
 
-    // IMPORTANT: the YAML enter_hits/exit_hits are now seconds. We evaluate
-    // the state machine at most once per second, regardless of the CSI
-    // callback rate. Previously '2 hits' meant two fast callbacks and could
-    // create a false ON almost immediately after every re-arm.
-    if (this->last_decision_ms_ != 0 &&
-        static_cast<uint32_t>(now_ms - this->last_decision_ms_) < kDecisionIntervalMs) {
-      return this->result_();
-    }
-    this->last_decision_ms_ = now_ms;
+    // Compress excess energy into a dimensionless score. This is what the
+    // state machine uses instead of a single absolute variance crossing.
+    const float excess = std::fmax(0.0f, variance - enter_level);
+    const float score = excess / std::fmax(1.0f, enter_level);
 
     if (!this->active_) {
       if (this->rearm_required_) {
-        if (variance <= exit_threshold) {
-          this->quiet_rearm_count_++;
-          if (this->quiet_rearm_count_ >= kQuietRearmSeconds) {
+        if (variance <= exit_level) {
+          if (this->quiet_seconds_ < kRearmSeconds) ++this->quiet_seconds_;
+          if (this->quiet_seconds_ >= kRearmSeconds) {
             this->rearm_required_ = false;
-            this->quiet_rearm_count_ = 0;
-            this->enter_count_ = 0;
+            this->quiet_seconds_ = 0;
           }
         } else {
-          this->quiet_rearm_count_ = 0;
+          this->quiet_seconds_ = 0;
         }
         return this->result_();
       }
 
-      if (variance > enter_threshold) {
-        this->enter_count_++;
-        if (this->enter_count_ >= this->enter_hits_) {
-          this->active_ = true;
-          this->hold_until_ms_ = now_ms + this->hold_time_ms_;
-          this->enter_count_ = 0;
-        }
+      // A single spike is not movement. Require a sustained energy pattern,
+      // and accumulate strength instead of counting raw CSI callbacks.
+      if (score >= kStrongScore) {
+        if (this->strong_seconds_ < kMaxStrongSeconds) ++this->strong_seconds_;
+      } else if (score >= kWeakScore) {
+        if (this->strong_seconds_ > 0) --this->strong_seconds_;
       } else {
-        this->enter_count_ = 0;
-        if (variance <= exit_threshold)
-          this->baseline_ += this->baseline_alpha_ * (variance - this->baseline_);
+        this->strong_seconds_ = 0;
+      }
+
+      if (this->strong_seconds_ >= kRequiredStrongSeconds) {
+        this->active_ = true;
+        this->hold_until_ms_ = now_ms + this->hold_time_ms_;
+        this->strong_seconds_ = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-      if (variance <= exit_threshold) {
-        this->exit_count_++;
-        if (this->exit_count_ >= this->exit_hits_) {
+      // Once the presentation hold expires, OFF requires several quiet
+      // seconds. The signal itself, not the 60 s timer, decides recovery.
+      if (variance <= exit_level) {
+        if (this->exit_quiet_seconds_ < kExitQuietSeconds) ++this->exit_quiet_seconds_;
+        if (this->exit_quiet_seconds_ >= kExitQuietSeconds) {
           this->active_ = false;
-          this->exit_count_ = 0;
-          this->enter_count_ = 0;
           this->rearm_required_ = true;
-          this->quiet_rearm_count_ = 0;
-          this->count_ = 0;
-          this->variance_ = 0.0f;
+          this->exit_quiet_seconds_ = 0;
+          this->strong_seconds_ = 0;
         }
       } else {
-        this->exit_count_ = 0;
+        this->exit_quiet_seconds_ = 0;
       }
     }
 
@@ -137,19 +132,18 @@ class MvsMotionDetector {
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
 
     float sum = 0.0f;
-    for (uint16_t i = 0; i < usable; i++) sum += this->calibration_values_[i];
+    for (uint16_t i = 0; i < usable; ++i) sum += this->calibration_values_[i];
     this->baseline_ = sum / static_cast<float>(usable);
 
-    float sum_sq = 0.0f;
-    for (uint16_t i = 0; i < usable; i++) {
+    float sq = 0.0f;
+    for (uint16_t i = 0; i < usable; ++i) {
       const float d = this->calibration_values_[i] - this->baseline_;
-      sum_sq += d * d;
+      sq += d * d;
     }
-    this->variance_stddev_ = std::sqrt(sum_sq / static_cast<float>(usable > 1 ? usable - 1 : 1));
+    this->variance_stddev_ = std::sqrt(sq / static_cast<float>(std::max<uint16_t>(1, usable - 1)));
 
     const uint16_t p99_index = static_cast<uint16_t>((usable - 1) * 0.99f);
     this->quiet_p99_ = this->calibration_values_[p99_index];
-
     this->calibrated_ = true;
     this->threshold_ = this->threshold_for_baseline_();
   }
@@ -172,9 +166,12 @@ class MvsMotionDetector {
   static constexpr uint16_t kMaxCalibrationSamples = 360;
   static constexpr uint16_t kMinimumCalibrationSamples = 240;
   static constexpr uint32_t kCalibrationDurationMs = 300000;
-  static constexpr uint32_t kCalibrationSampleMs = 1000;
-  static constexpr uint32_t kDecisionIntervalMs = 1000;
-  static constexpr uint8_t kQuietRearmSeconds = 10;
+  static constexpr uint16_t kRearmSeconds = 10;
+  static constexpr uint16_t kExitQuietSeconds = 5;
+  static constexpr uint16_t kRequiredStrongSeconds = 3;
+  static constexpr uint16_t kMaxStrongSeconds = 6;
+  static constexpr float kStrongScore = 0.50f;
+  static constexpr float kWeakScore = 0.20f;
 
   float window_[kMaxWindow]{};
   uint16_t count_{0};
@@ -184,14 +181,14 @@ class MvsMotionDetector {
   uint16_t calibration_count_{0};
   uint32_t calibration_start_ms_{0};
   uint32_t last_calibration_sample_ms_{0};
-  uint32_t last_decision_ms_{0};
 
   float sigma_multiplier_{2.0f};
   float baseline_alpha_{0.005f};
   uint8_t enter_hits_{2};
   uint8_t exit_hits_{2};
-  uint8_t enter_count_{0};
-  uint8_t exit_count_{0};
+  uint8_t strong_seconds_{0};
+  uint8_t exit_quiet_seconds_{0};
+  uint8_t quiet_seconds_{0};
 
   uint32_t hold_time_ms_{60000};
   uint32_t hold_until_ms_{0};
@@ -199,7 +196,6 @@ class MvsMotionDetector {
   bool active_{false};
   bool calibrated_{false};
   bool rearm_required_{false};
-  uint8_t quiet_rearm_count_{0};
 
   float quiet_p99_{0.0f};
   float variance_stddev_{0.0f};
