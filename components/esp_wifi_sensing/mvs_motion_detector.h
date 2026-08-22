@@ -12,6 +12,7 @@ struct MvsMotionResult {
   float variance{0.0f};
   float threshold{0.0f};
   float baseline{0.0f};
+  float change_rate{0.0f};
 };
 
 // MVS (Motion Variance Signature) detector.
@@ -57,6 +58,16 @@ class MvsMotionDetector {
       return this->result_();
     this->last_1hz_ms_ = now_ms;
 
+    // Diagnostic only: rate of change of the variance-derived activity.
+    // This does NOT participate in the MVS motion decision yet.
+    const float activity = std::sqrt(std::fmax(0.0f, variance));
+    if (this->have_previous_activity_)
+      this->change_rate_ = activity - this->previous_activity_;
+    else
+      this->change_rate_ = 0.0f;
+    this->previous_activity_ = activity;
+    this->have_previous_activity_ = true;
+
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
       if (this->calibration_count_ < kCalibrationSamples)
@@ -71,15 +82,11 @@ class MvsMotionDetector {
 
     this->threshold_ = this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_;
 
-    // Work in amplitude domain (sqrt variance). Ratios here are less dominated
-    // by rare squared CSI outliers than raw variance crossings.
-    const float activity = std::sqrt(std::fmax(0.0f, variance));
     const float quiet_activity = std::sqrt(std::fmax(1.0f, this->baseline_));
     const float ratio = activity / quiet_activity;
     const float change = std::fmax(0.0f, ratio - 1.0f);
     this->change_score_ = 0.80f * this->change_score_ + 0.20f * change;
 
-    // Slowly adapt the quiet reference only while clearly quiet.
     if (!this->active_ && !this->rearm_required_ && change < kQuietChange)
       this->baseline_ = 0.997f * this->baseline_ + 0.003f * variance;
 
@@ -131,19 +138,11 @@ class MvsMotionDetector {
 
  private:
   void finish_calibration_() {
-    // Robust calibration: discard the upper 10% of samples first, then use
-    // the median of the remaining quiet distribution as the noise reference.
-    // This prevents a rare CSI burst (e.g. 100x the normal floor) from
-    // poisoning the baseline and threshold during startup.
     std::sort(this->calibration_, this->calibration_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
     const uint16_t median_index = usable / 2;
     this->baseline_ = std::fmax(1.0f, this->calibration_[median_index]);
 
-    // Robust dispersion: median absolute deviation (MAD), converted to a
-    // standard-deviation-like scale. This is much less sensitive to outliers
-    // than mean/stddev and gives the existing StdDev sensor a useful robust
-    // diagnostic value.
     float deviations[kCalibrationSamples];
     for (uint16_t i = 0; i < usable; ++i)
       deviations[i] = std::fabs(this->calibration_[i] - this->baseline_);
@@ -161,6 +160,7 @@ class MvsMotionDetector {
     r.variance = this->variance_;
     r.threshold = this->threshold_;
     r.baseline = this->baseline_;
+    r.change_rate = this->change_rate_;
     return r;
   }
 
@@ -200,12 +200,15 @@ class MvsMotionDetector {
   bool active_{false};
   bool calibrated_{false};
   bool rearm_required_{false};
+  bool have_previous_activity_{false};
 
   float baseline_{0.0f};
   float variance_stddev_{0.0f};
   float variance_{0.0f};
   float threshold_{0.0f};
   float change_score_{0.0f};
+  float previous_activity_{0.0f};
+  float change_rate_{0.0f};
 };
 
 }  // namespace esp_wifi_sensing
