@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -14,8 +15,9 @@ struct MvsMotionResult {
 };
 
 // Windowed variance detector using a statistically calibrated quiet baseline.
-// The threshold is derived from the distribution of quiet-window variance,
-// rather than simply multiplying the mean by a fixed factor.
+// Calibration is deliberately long and sampled at 1 Hz so the startup
+// threshold represents the real environmental noise floor rather than a few
+// initial CSI windows.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -49,38 +51,34 @@ class MvsMotionDetector {
     variance /= static_cast<float>(n);
     this->variance_ = variance;
 
-    // Build the quiet distribution from complete windows. We need both the
-    // mean and spread: mean*2 was too permissive for this CSI noise floor.
+    // Calibration is time based, not update-count based. The detector may be
+    // fed much faster than the 1 Hz diagnostic sensors, so counting calls
+    // would make the calibration finish almost immediately.
     if (!this->calibrated_) {
-      this->calibration_count_++;
-      const float delta = variance - this->calibration_mean_;
-      this->calibration_mean_ += delta / static_cast<float>(this->calibration_count_);
-      const float delta2 = variance - this->calibration_mean_;
-      this->calibration_m2_ += delta * delta2;
+      if (this->last_calibration_sample_ms_ == 0 ||
+          static_cast<uint32_t>(now_ms - this->last_calibration_sample_ms_) >= kCalibrationSampleMs) {
+        this->last_calibration_sample_ms_ = now_ms;
+        if (this->calibration_count_ < kMaxCalibrationSamples) {
+          this->calibration_values_[this->calibration_count_++] = variance;
+        }
+      }
 
-      if (this->calibration_count_ >= kCalibrationWindows) {
-        this->baseline_ = this->calibration_mean_;
-        this->variance_stddev_ = std::sqrt(
-            this->calibration_count_ > 1
-                ? this->calibration_m2_ / static_cast<float>(this->calibration_count_ - 1)
-                : 0.0f);
-        this->calibrated_ = true;
-        this->threshold_ = this->threshold_for_baseline_();
+      if (static_cast<uint32_t>(now_ms - this->calibration_start_ms_) >= kCalibrationDurationMs &&
+          this->calibration_count_ >= kMinimumCalibrationSamples) {
+        this->finish_calibration_();
       }
       return this->result_();
     }
 
     const float enter_threshold = this->threshold_for_baseline_();
-    // Hysteresis: leaving requires the variance to return well inside the
-    // quiet region, not merely dip one sample below the entry threshold.
+    // Hysteresis: exit is deliberately below the entry level.
     const float exit_threshold = this->baseline_ + this->variance_stddev_ *
         std::fmax(0.5f, this->sigma_multiplier_ * 0.60f);
     this->threshold_ = enter_threshold;
 
     if (!this->active_) {
       if (variance <= enter_threshold) {
-        // Learn only quiet observations, and do so slowly. Keep the measured
-        // spread stable while adapting the mean noise floor.
+        // Slow adaptation only from quiet observations.
         this->baseline_ += this->baseline_alpha_ * (variance - this->baseline_);
         this->enter_count_ = 0;
       } else {
@@ -110,6 +108,28 @@ class MvsMotionDetector {
   }
 
  private:
+  void finish_calibration_() {
+    // Ignore the highest 10% of calibration windows. This prevents an
+    // occasional movement during startup from becoming part of the normal
+    // noise floor and pushing the threshold upwards.
+    std::sort(this->calibration_values_,
+              this->calibration_values_ + this->calibration_count_);
+    const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
+
+    float sum = 0.0f;
+    for (uint16_t i = 0; i < usable; i++) sum += this->calibration_values_[i];
+    this->baseline_ = sum / static_cast<float>(usable);
+
+    float sum_sq = 0.0f;
+    for (uint16_t i = 0; i < usable; i++) {
+      const float d = this->calibration_values_[i] - this->baseline_;
+      sum_sq += d * d;
+    }
+    this->variance_stddev_ = std::sqrt(sum_sq / static_cast<float>(usable > 1 ? usable - 1 : 1));
+    this->calibrated_ = true;
+    this->threshold_ = this->threshold_for_baseline_();
+  }
+
   float threshold_for_baseline_() const {
     return std::fmax(this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_, 1.0f);
   }
@@ -124,14 +144,22 @@ class MvsMotionDetector {
   }
 
   static constexpr uint16_t kMaxWindow = 64;
-  static constexpr uint8_t kCalibrationWindows = 16;
+  static constexpr uint16_t kMaxCalibrationSamples = 360;
+  static constexpr uint16_t kMinimumCalibrationSamples = 120;
+  static constexpr uint32_t kCalibrationDurationMs = 300000;  // 5 minutes
+  static constexpr uint32_t kCalibrationSampleMs = 1000;      // 1 Hz
 
   float window_[kMaxWindow]{};
   uint16_t count_{0};
   uint16_t window_samples_{32};
 
-  // Kept under the existing YAML name mvs_threshold_multiplier, but now it
-  // has the statistically useful meaning of a sigma multiplier.
+  float calibration_values_[kMaxCalibrationSamples]{};
+  uint16_t calibration_count_{0};
+  uint32_t calibration_start_ms_{0};
+  uint32_t last_calibration_sample_ms_{0};
+
+  // Kept under the existing YAML name mvs_threshold_multiplier, but it is a
+  // sigma multiplier: threshold = baseline + sigma * multiplier.
   float sigma_multiplier_{2.0f};
   float baseline_alpha_{0.01f};
 
@@ -145,10 +173,7 @@ class MvsMotionDetector {
 
   bool active_{false};
   bool calibrated_{false};
-  uint16_t calibration_count_{0};
 
-  float calibration_mean_{0.0f};
-  float calibration_m2_{0.0f};
   float variance_stddev_{0.0f};
   float baseline_{0.0f};
   float variance_{0.0f};
