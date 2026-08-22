@@ -15,11 +15,10 @@ struct MvsMotionResult {
 };
 
 // MVS (Motion Variance Signature) detector.
-//
-// Original detector inspired by the general principle used by Espressif-style
-// CSI motion detection: compare short-term CSI activity against a learned
-// quiet reference, smooth the temporal change, and require persistence.
-// This is not a copy of Espressif's implementation.
+// Original detector inspired by the general principle used by
+// Espressif-style CSI motion detection: compare short-term CSI activity
+// against a learned quiet reference, smooth the temporal change, and require
+// persistence. This is not a copy of Espressif's implementation.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -72,18 +71,15 @@ class MvsMotionDetector {
 
     this->threshold_ = this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_;
 
-    // Work in the amplitude domain (sqrt variance), because ratios in this
-    // domain are much less dominated by rare squared outliers than raw
-    // variance crossings.
+    // Work in amplitude domain (sqrt variance). Ratios here are less dominated
+    // by rare squared CSI outliers than raw variance crossings.
     const float activity = std::sqrt(std::fmax(0.0f, variance));
     const float quiet_activity = std::sqrt(std::fmax(1.0f, this->baseline_));
     const float ratio = activity / quiet_activity;
-
-    // Slow envelope of CHANGE rather than an absolute level detector.
     const float change = std::fmax(0.0f, ratio - 1.0f);
     this->change_score_ = 0.80f * this->change_score_ + 0.20f * change;
 
-    // Adapt the quiet reference only while the signal is clearly quiet.
+    // Slowly adapt the quiet reference only while clearly quiet.
     if (!this->active_ && !this->rearm_required_ && change < kQuietChange)
       this->baseline_ = 0.997f * this->baseline_ + 0.003f * variance;
 
@@ -100,8 +96,6 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      // Temporal evidence: moderate change contributes one point, strong
-      // change contributes two. Three points are required inside five seconds.
       if (this->change_score_ >= kStrongChange)
         this->enter_score_ += 2;
       else if (this->change_score_ >= kModerateChange)
@@ -118,8 +112,6 @@ class MvsMotionDetector {
         this->enter_window_seconds_ = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-      // Hold is presentation-only. OFF requires the smoothed signal to return
-      // to the quiet region for several real seconds.
       if (this->change_score_ < kExitChange)
         ++this->exit_seconds_;
       else
@@ -139,19 +131,26 @@ class MvsMotionDetector {
 
  private:
   void finish_calibration_() {
+    // Robust calibration: discard the upper 10% of samples first, then use
+    // the median of the remaining quiet distribution as the noise reference.
+    // This prevents a rare CSI burst (e.g. 100x the normal floor) from
+    // poisoning the baseline and threshold during startup.
     std::sort(this->calibration_, this->calibration_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
+    const uint16_t median_index = usable / 2;
+    this->baseline_ = std::fmax(1.0f, this->calibration_[median_index]);
 
-    float sum = 0.0f;
-    for (uint16_t i = 0; i < usable; ++i) sum += this->calibration_[i];
-    this->baseline_ = std::fmax(1.0f, sum / static_cast<float>(usable));
+    // Robust dispersion: median absolute deviation (MAD), converted to a
+    // standard-deviation-like scale. This is much less sensitive to outliers
+    // than mean/stddev and gives the existing StdDev sensor a useful robust
+    // diagnostic value.
+    float deviations[kCalibrationSamples];
+    for (uint16_t i = 0; i < usable; ++i)
+      deviations[i] = std::fabs(this->calibration_[i] - this->baseline_);
+    std::sort(deviations, deviations + usable);
+    const float mad = deviations[median_index];
+    this->variance_stddev_ = std::fmax(1.0f, 1.4826f * mad);
 
-    float sq = 0.0f;
-    for (uint16_t i = 0; i < usable; ++i) {
-      const float d = this->calibration_[i] - this->baseline_;
-      sq += d * d;
-    }
-    this->variance_stddev_ = std::sqrt(sq / static_cast<float>(std::max<uint16_t>(1, usable - 1)));
     this->calibrated_ = true;
     this->threshold_ = this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_;
   }
