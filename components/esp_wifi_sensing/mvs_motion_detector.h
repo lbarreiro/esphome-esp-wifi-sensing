@@ -59,7 +59,8 @@ class MvsMotionDetector {
     this->last_1hz_ms_ = now_ms;
 
     // Diagnostic only: rate of change of the variance-derived activity.
-    // This does NOT participate in the MVS motion decision yet.
+    // It is also used as temporal evidence for entry below; it is NOT a
+    // standalone threshold.
     const float activity = std::sqrt(std::fmax(0.0f, variance));
     if (this->have_previous_activity_)
       this->change_rate_ = activity - this->previous_activity_;
@@ -85,7 +86,10 @@ class MvsMotionDetector {
     const float quiet_activity = std::sqrt(std::fmax(1.0f, this->baseline_));
     const float ratio = activity / quiet_activity;
     const float change = std::fmax(0.0f, ratio - 1.0f);
-    this->change_score_ = 0.80f * this->change_score_ + 0.20f * change;
+    // Faster response than the previous 80/20 smoothing. The variance itself
+    // is already windowed, so excessive second-stage smoothing was suppressing
+    // real transitions.
+    this->change_score_ = 0.60f * this->change_score_ + 0.40f * change;
 
     if (!this->active_ && !this->rearm_required_ && change < kQuietChange)
       this->baseline_ = 0.997f * this->baseline_ + 0.003f * variance;
@@ -103,20 +107,40 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      if (this->change_score_ >= kStrongChange)
-        this->enter_score_ += 2;
-      else if (this->change_score_ >= kModerateChange)
-        this->enter_score_ += 1;
+      // Entry is now a temporal signature rather than accumulated amplitude
+      // alone. A meaningful rise in activity is the start of an event. Once
+      // the signal is elevated, either a sustained elevated level or a
+      // subsequent falling edge completes the signature. Change rate is used
+      // as evidence, never as an absolute movement threshold.
+      const bool elevated = this->change_score_ >= kModerateChange;
+      const bool strong = this->change_score_ >= kStrongChange;
+      const bool rising = this->change_rate_ >= kRiseRate;
+      const bool falling = this->change_rate_ <= -kFallRate;
+
+      if (rising && elevated)
+        this->signature_score_ += 2;
+      else if (strong)
+        this->signature_score_ += 1;
+      else if (falling && this->signature_score_ > 0)
+        this->signature_score_ += 1;
       else
-        this->enter_score_ = std::max(0, this->enter_score_ - 1);
+        this->signature_score_ = std::max(0, this->signature_score_ - 1);
+
+      if (elevated)
+        this->elevated_seconds_++;
+      else
+        this->elevated_seconds_ = 0;
 
       if (++this->enter_window_seconds_ >= kEvidenceWindowSeconds) {
-        if (this->enter_score_ >= kRequiredEnterScore) {
+        const bool sustained = this->elevated_seconds_ >= kMinimumElevatedSeconds;
+        if (this->signature_score_ >= kRequiredSignatureScore ||
+            (sustained && this->signature_score_ >= kSustainedSignatureScore)) {
           this->active_ = true;
           this->hold_until_ms_ = now_ms + this->hold_time_ms_;
         }
-        this->enter_score_ = 0;
+        this->signature_score_ = 0;
         this->enter_window_seconds_ = 0;
+        this->elevated_seconds_ = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
       if (this->change_score_ < kExitChange)
@@ -128,8 +152,9 @@ class MvsMotionDetector {
         this->active_ = false;
         this->rearm_required_ = true;
         this->exit_seconds_ = 0;
-        this->enter_score_ = 0;
+        this->signature_score_ = 0;
         this->enter_window_seconds_ = 0;
+        this->elevated_seconds_ = 0;
       }
     }
 
@@ -138,6 +163,8 @@ class MvsMotionDetector {
 
  private:
   void finish_calibration_() {
+    // Robust calibration: discard the upper 10% of samples first, then use
+    // the median of the remaining quiet distribution as the noise reference.
     std::sort(this->calibration_, this->calibration_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
     const uint16_t median_index = usable / 2;
@@ -171,11 +198,15 @@ class MvsMotionDetector {
   static constexpr uint16_t kRearmSeconds = 10;
   static constexpr uint16_t kExitSeconds = 5;
   static constexpr uint16_t kEvidenceWindowSeconds = 5;
-  static constexpr int kRequiredEnterScore = 3;
+  static constexpr uint16_t kMinimumElevatedSeconds = 2;
+  static constexpr int kRequiredSignatureScore = 3;
+  static constexpr int kSustainedSignatureScore = 4;
   static constexpr float kStrongChange = 0.75f;
   static constexpr float kModerateChange = 0.40f;
   static constexpr float kQuietChange = 0.15f;
   static constexpr float kExitChange = 0.20f;
+  static constexpr float kRiseRate = 12.0f;
+  static constexpr float kFallRate = 12.0f;
 
   float raw_[kRawWindow]{};
   uint16_t raw_count_{0};
@@ -189,8 +220,9 @@ class MvsMotionDetector {
   float sigma_multiplier_{2.0f};
   uint8_t enter_hits_{2};
   uint8_t exit_hits_{2};
-  int enter_score_{0};
+  int signature_score_{0};
   uint16_t enter_window_seconds_{0};
+  uint16_t elevated_seconds_{0};
   uint16_t exit_seconds_{0};
   uint16_t quiet_seconds_{0};
 
