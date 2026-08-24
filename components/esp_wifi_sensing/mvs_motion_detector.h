@@ -20,9 +20,11 @@ struct MvsMotionResult {
   float feature_score{0.0f};
 };
 
-// MVS (Motion Variance Signature) v2.
-// Motion is decided from independent spatial/temporal CSI evidence rather
-// than requiring one exact temporal signature. Variance remains diagnostic.
+// MVS (Motion Variance Signature) v3.
+// Detects events rather than RF states. The CSI vector is normalized per
+// packet so common gain changes are suppressed; motion entry requires a
+// temporal onset followed by confirmation of an event, rather than a high
+// feature level by itself. This is an original detector, not a copy.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -41,9 +43,8 @@ class MvsMotionDetector {
 
     if (!this->feature_ready_) return this->result_();
 
-    const float raw_change = this->spatial_change_;
-    this->change_rate_ = raw_change - this->previous_spatial_change_;
-    this->previous_spatial_change_ = raw_change;
+    this->change_rate_ = this->spatial_change_ - this->previous_spatial_change_;
+    this->previous_spatial_change_ = this->spatial_change_;
 
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
@@ -57,17 +58,19 @@ class MvsMotionDetector {
 
     const float normalized = (this->feature_activity_ - this->baseline_) /
                              std::fmax(0.001f, this->feature_scale_);
-    this->feature_score_ = 0.65f * this->feature_score_ + 0.35f * std::fmax(0.0f, normalized);
+    const float positive_normalized = std::fmax(0.0f, normalized);
+    this->feature_score_ = 0.70f * this->feature_score_ + 0.30f * positive_normalized;
 
-    const bool feature_evidence = this->feature_score_ >= kModerateScore;
-    const bool feature_strong = this->feature_score_ >= kStrongScore;
-    const bool spatial_evidence = raw_change >= kMinimumSpatialChange;
-    const bool spatial_strong = raw_change >= kStrongSpatialChange;
-    const bool rate_evidence = std::fabs(this->change_rate_) >= kRiseRate;
+    const bool level = this->feature_score_ >= kModerateScore;
+    const bool strong_level = this->feature_score_ >= kStrongScore;
+    const bool spatial = this->spatial_change_ >= kMinimumSpatialChange;
+    const bool strong_spatial = this->spatial_change_ >= kStrongSpatialChange;
+    const bool rising = this->change_rate_ >= kRiseRate;
+    const bool falling = this->change_rate_ <= -kFallRate;
 
     if (!this->active_) {
       if (this->rearm_required_) {
-        if (this->feature_score_ < kQuietScore && raw_change < kQuietSpatialChange) {
+        if (this->feature_score_ < kQuietScore && this->spatial_change_ < kQuietSpatialChange) {
           if (++this->quiet_seconds_ >= kRearmSeconds) {
             this->rearm_required_ = false;
             this->quiet_seconds_ = 0;
@@ -78,41 +81,48 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      // Multi-feature entry: any two independent strong/moderate evidences
-      // within the same short window are enough. This avoids requiring one
-      // very specific rise/fall shape while still rejecting isolated spikes.
-      int evidence = 0;
-      if (feature_strong) evidence += 2;
-      else if (feature_evidence) evidence += 1;
-      if (spatial_strong) evidence += 2;
-      else if (spatial_evidence) evidence += 1;
-      if (rate_evidence) evidence += 1;
+      // Stage 1: find the onset of an event. A high level alone is never
+      // enough. We need a meaningful positive transition plus independent
+      // spatial/feature evidence.
+      if (!this->event_armed_) {
+        const int onset_evidence = (rising ? 1 : 0) + (level ? 1 : 0) +
+                                   (spatial ? 1 : 0) + (strong_level || strong_spatial ? 1 : 0);
+        if (rising && onset_evidence >= kOnsetEvidence) {
+          this->event_armed_ = true;
+          this->event_age_ = 0;
+          this->event_peak_ = this->feature_score_;
+          this->event_peak_spatial_ = this->spatial_change_;
+          this->event_rise_seen_ = true;
+          this->event_fall_seen_ = false;
+        }
+      } else {
+        ++this->event_age_;
+        this->event_peak_ = std::fmax(this->event_peak_, this->feature_score_);
+        this->event_peak_spatial_ = std::fmax(this->event_peak_spatial_, this->spatial_change_);
+        if (falling) this->event_fall_seen_ = true;
 
-      if (evidence >= kStrongEvidence)
-        this->signature_score_ += 2;
-      else if (evidence >= kModerateEvidence)
-        this->signature_score_ += 1;
-      else
-        this->signature_score_ = std::max(0, this->signature_score_ - 1);
+        // Stage 2: confirm that the onset developed into a real transient.
+        // Either a clear peak followed by a fall, or a strong spatial/feature
+        // excursion followed by a change in the signal, can confirm it.
+        const bool peak = this->event_peak_ >= kPeakScore ||
+                          this->event_peak_spatial_ >= kPeakSpatial;
+        const bool returned = this->event_fall_seen_ &&
+                              (this->feature_score_ <= this->event_peak_ * kReturnFraction ||
+                               this->spatial_change_ <= this->event_peak_spatial_ * kReturnFraction);
+        const bool strong_transient = peak && this->event_age_ >= 1 &&
+                                      (this->event_fall_seen_ || this->change_rate_ <= 0.0f);
 
-      if (evidence >= kModerateEvidence)
-        ++this->elevated_seconds_;
-      else
-        this->elevated_seconds_ = 0;
-
-      if (++this->enter_window_seconds_ >= kEvidenceWindowSeconds) {
-        const bool sustained = this->elevated_seconds_ >= kMinimumElevatedSeconds;
-        if (this->signature_score_ >= kRequiredSignatureScore ||
-            (sustained && this->signature_score_ >= kSustainedSignatureScore)) {
+        if (peak && returned && strong_transient) {
           this->active_ = true;
           this->hold_until_ms_ = now_ms + this->hold_time_ms_;
+          this->reset_event_();
+        } else if (this->event_age_ >= kEventWindowSeconds) {
+          this->reset_event_();
         }
-        this->signature_score_ = 0;
-        this->enter_window_seconds_ = 0;
-        this->elevated_seconds_ = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-      if (this->feature_score_ < kExitScore && raw_change < kMinimumSpatialChange)
+      // Exit only after the signal has genuinely returned to the quiet region.
+      if (this->feature_score_ < kExitScore && this->spatial_change_ < kMinimumSpatialChange)
         ++this->exit_seconds_;
       else
         this->exit_seconds_ = 0;
@@ -121,20 +131,27 @@ class MvsMotionDetector {
         this->active_ = false;
         this->rearm_required_ = true;
         this->exit_seconds_ = 0;
-        this->signature_score_ = 0;
-        this->enter_window_seconds_ = 0;
-        this->elevated_seconds_ = 0;
       }
     }
 
-    if (!this->active_ && !this->rearm_required_ && this->feature_score_ < kQuietScore &&
-        raw_change < kQuietSpatialChange)
-      this->baseline_ = 0.997f * this->baseline_ + 0.003f * this->feature_activity_;
+    // Slow baseline tracking only while the detector is genuinely quiet.
+    if (!this->active_ && !this->rearm_required_ && !this->event_armed_ &&
+        this->feature_score_ < kQuietScore && this->spatial_change_ < kQuietSpatialChange)
+      this->baseline_ = 0.998f * this->baseline_ + 0.002f * this->feature_activity_;
 
     return this->result_();
   }
 
  private:
+  void reset_event_() {
+    this->event_armed_ = false;
+    this->event_age_ = 0;
+    this->event_peak_ = 0.0f;
+    this->event_peak_spatial_ = 0.0f;
+    this->event_rise_seen_ = false;
+    this->event_fall_seen_ = false;
+  }
+
   void update_variance_(const CsiPacket &packet) {
     if (packet.raw_bytes == nullptr || packet.len < 4) return;
     const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
@@ -242,20 +259,20 @@ class MvsMotionDetector {
   static constexpr uint32_t kCalibrationMs = 300000;
   static constexpr uint16_t kRearmSeconds = 10;
   static constexpr uint16_t kExitSeconds = 5;
-  static constexpr uint16_t kEvidenceWindowSeconds = 5;
-  static constexpr uint16_t kMinimumElevatedSeconds = 2;
-  static constexpr int kRequiredSignatureScore = 3;
-  static constexpr int kSustainedSignatureScore = 4;
-  static constexpr int kModerateEvidence = 2;
-  static constexpr int kStrongEvidence = 3;
-  static constexpr float kModerateScore = 2.0f;
-  static constexpr float kStrongScore = 3.5f;
-  static constexpr float kQuietScore = 0.8f;
-  static constexpr float kExitScore = 1.0f;
-  static constexpr float kMinimumSpatialChange = 0.035f;
-  static constexpr float kStrongSpatialChange = 0.10f;
-  static constexpr float kQuietSpatialChange = 0.015f;
-  static constexpr float kRiseRate = 0.02f;
+  static constexpr uint16_t kEventWindowSeconds = 6;
+  static constexpr int kOnsetEvidence = 3;
+  static constexpr float kModerateScore = 1.20f;
+  static constexpr float kStrongScore = 2.50f;
+  static constexpr float kPeakScore = 1.80f;
+  static constexpr float kQuietScore = 0.45f;
+  static constexpr float kExitScore = 0.55f;
+  static constexpr float kMinimumSpatialChange = 0.020f;
+  static constexpr float kStrongSpatialChange = 0.055f;
+  static constexpr float kQuietSpatialChange = 0.010f;
+  static constexpr float kPeakSpatial = 0.045f;
+  static constexpr float kRiseRate = 0.010f;
+  static constexpr float kFallRate = 0.008f;
+  static constexpr float kReturnFraction = 0.65f;
 
   uint16_t window_samples_{32};
   float sigma_multiplier_{2.0f};
@@ -276,6 +293,9 @@ class MvsMotionDetector {
   bool calibrated_{false};
   bool active_{false};
   bool rearm_required_{false};
+  bool event_armed_{false};
+  bool event_rise_seen_{false};
+  bool event_fall_seen_{false};
 
   float baseline_{0.0f};
   float feature_scale_{0.0f};
@@ -288,9 +308,9 @@ class MvsMotionDetector {
   float change_rate_{0.0f};
   float coherence_{1.0f};
 
-  int signature_score_{0};
-  uint16_t enter_window_seconds_{0};
-  uint16_t elevated_seconds_{0};
+  float event_peak_{0.0f};
+  float event_peak_spatial_{0.0f};
+  uint16_t event_age_{0};
   uint16_t exit_seconds_{0};
   uint16_t quiet_seconds_{0};
 };
