@@ -61,17 +61,14 @@ class MvsMotionDetector {
       return this->result_();
     }
 
-    // Robust normalized feature score. The score is relative to the learned
-    // quiet distribution, not to raw CSI amplitude.
     const float normalized = (this->feature_activity_ - this->baseline_) /
                              std::fmax(0.001f, this->feature_scale_);
     this->feature_score_ = 0.65f * this->feature_score_ + 0.35f * std::fmax(0.0f, normalized);
 
-    // Common-mode RF changes tend to affect all subcarriers similarly and
-    // therefore have low normalized spatial change. Motion must have both
-    // enough spatial-temporal change and a coherent transition.
     const bool elevated = this->feature_score_ >= kModerateScore;
     const bool strong = this->feature_score_ >= kStrongScore;
+    // Change-rate is deliberately kept in the normalized spatial-change
+    // scale. It is evidence of a transition, not an absolute motion metric.
     const bool rising = this->change_rate_ >= kRiseRate;
     const bool falling = this->change_rate_ <= -kFallRate;
 
@@ -88,7 +85,6 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      // A genuine event should create a spatially structured transition.
       if (rising && elevated)
         this->signature_score_ += 2;
       else if (strong && raw_change >= kMinimumSpatialChange)
@@ -130,8 +126,6 @@ class MvsMotionDetector {
       }
     }
 
-    // Adapt only when clearly quiet. This prevents a new RF state during an
-    // active event from becoming the new motion-free reference.
     if (!this->active_ && !this->rearm_required_ && this->feature_score_ < kQuietScore &&
         raw_change < kQuietSpatialChange) {
       this->baseline_ = 0.997f * this->baseline_ + 0.003f * this->feature_activity_;
@@ -145,7 +139,6 @@ class MvsMotionDetector {
  private:
   void update_variance_(const CsiPacket &packet) {
     if (packet.raw_bytes == nullptr || packet.len < 4) return;
-    // Preserve the diagnostic variance concept from the previous MVS.
     float mean = 0.0f;
     const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
     if (pairs == 0) return;
@@ -182,8 +175,6 @@ class MvsMotionDetector {
     mean /= pairs;
     if (mean < 1.0f) return;
 
-    // Normalize each packet by its own mean. This suppresses common-mode RSSI
-    // and gain changes while retaining the relative CSI shape.
     float norm[kFeatureBins]{};
     float norm_std = 0.0f;
     for (uint16_t i = 0; i < pairs; ++i) norm[i] = magnitudes[i] / mean;
@@ -211,9 +202,6 @@ class MvsMotionDetector {
     this->coherence_ = std::fmax(0.0f, std::fmin(1.0f, cosine));
     this->spatial_change_ = temporal;
 
-    // Feature activity deliberately combines spatial shape change and loss of
-    // temporal coherence. A uniform RF/gain shift largely disappears after
-    // normalization; a localized CSI pattern change survives.
     const float incoherence = 1.0f - this->coherence_;
     this->feature_activity_ = 0.70f * temporal + 0.30f * incoherence + 0.15f * norm_std;
 
