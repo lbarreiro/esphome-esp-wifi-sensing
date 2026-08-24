@@ -15,6 +15,9 @@ CONF_CSI_ENTER_LEVEL = "csi_enter_level"
 CONF_CSI_VARIANCE = "csi_variance"
 CONF_CSI_VARIANCE_THRESHOLD = "csi_variance_threshold"
 CONF_CSI_CHANGE_RATE = "csi_change_rate"
+CONF_CSI_SPATIAL_CHANGE = "csi_spatial_change"
+CONF_CSI_COHERENCE = "csi_coherence"
+CONF_CSI_FEATURE_SCORE = "csi_feature_score"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -28,6 +31,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CSI_VARIANCE): sensor.sensor_schema(accuracy_decimals=2, state_class=STATE_CLASS_MEASUREMENT),
         cv.Optional(CONF_CSI_VARIANCE_THRESHOLD): sensor.sensor_schema(accuracy_decimals=2, state_class=STATE_CLASS_MEASUREMENT),
         cv.Optional(CONF_CSI_CHANGE_RATE): sensor.sensor_schema(accuracy_decimals=3, state_class=STATE_CLASS_MEASUREMENT),
+        cv.Optional(CONF_CSI_SPATIAL_CHANGE): sensor.sensor_schema(accuracy_decimals=4, state_class=STATE_CLASS_MEASUREMENT),
+        cv.Optional(CONF_CSI_COHERENCE): sensor.sensor_schema(accuracy_decimals=4, state_class=STATE_CLASS_MEASUREMENT),
+        cv.Optional(CONF_CSI_FEATURE_SCORE): sensor.sensor_schema(accuracy_decimals=3, state_class=STATE_CLASS_MEASUREMENT),
     }
 )
 
@@ -60,3 +66,12 @@ async def to_code(config):
     if CONF_CSI_CHANGE_RATE in config:
         sens = await sensor.new_sensor(config[CONF_CSI_CHANGE_RATE])
         cg.add(parent.set_csi_change_rate_sensor(sens))
+    if CONF_CSI_SPATIAL_CHANGE in config:
+        sens = await sensor.new_sensor(config[CONF_CSI_SPATIAL_CHANGE])
+        cg.add(parent.set_csi_spatial_change_sensor(sens))
+    if CONF_CSI_COHERENCE in config:
+        sens = await sensor.new_sensor(config[CONF_CSI_COHERENCE])
+        cg.add(parent.set_csi_coherence_sensor(sens))
+    if CONF_CSI_FEATURE_SCORE in config:
+        sens = await sensor.new_sensor(config[CONF_CSI_FEATURE_SCORE])
+        cg.add(parent.set_csi_feature_score_sensor(sens))
