@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "csi_packet.h"
+
 namespace esphome {
 namespace esp_wifi_sensing {
 
@@ -13,13 +15,16 @@ struct MvsMotionResult {
   float threshold{0.0f};
   float baseline{0.0f};
   float change_rate{0.0f};
+  float spatial_change{0.0f};
+  float coherence{1.0f};
+  float feature_score{0.0f};
 };
 
-// MVS (Motion Variance Signature) detector.
-// Original detector inspired by the general principle used by
-// Espressif-style CSI motion detection: compare short-term CSI activity
-// against a learned quiet reference, smooth the temporal change, and require
-// persistence. This is not a copy of Espressif's implementation.
+// MVS (Motion Variance Signature) v2.
+// Uses variance for diagnostics, but motion is decided from a normalized
+// spatial-temporal CSI signature: per-subcarrier magnitude change, temporal
+// change and spatial contrast. Common-mode amplitude changes are normalized
+// out so RF/gain changes are less likely to look like motion.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -28,75 +33,51 @@ class MvsMotionDetector {
   void set_exit_hits(uint8_t value) { this->exit_hits_ = value; }
   void set_hold_time_ms(uint32_t value) { this->hold_time_ms_ = value; }
 
-  MvsMotionResult update(uint32_t metric, uint32_t now_ms) {
-    const float x = static_cast<float>(metric);
-    if (this->raw_count_ < kRawWindow) {
-      this->raw_[this->raw_count_++] = x;
-    } else {
-      for (uint16_t i = 1; i < kRawWindow; ++i) this->raw_[i - 1] = this->raw_[i];
-      this->raw_[kRawWindow - 1] = x;
-    }
+  MvsMotionResult update(const CsiPacket &packet, uint32_t now_ms) {
+    this->update_variance_(packet);
+    this->extract_features_(packet);
 
-    const uint16_t n = std::min<uint16_t>(this->raw_count_, this->window_samples_);
-    if (n < 16) return this->result_();
-
-    const uint16_t start = this->raw_count_ - n;
-    float mean = 0.0f;
-    for (uint16_t i = start; i < this->raw_count_; ++i) mean += this->raw_[i];
-    mean /= static_cast<float>(n);
-
-    float variance = 0.0f;
-    for (uint16_t i = start; i < this->raw_count_; ++i) {
-      const float d = this->raw_[i] - mean;
-      variance += d * d;
-    }
-    variance /= static_cast<float>(n);
-    this->variance_ = variance;
-
-    // Calibration and decisions are both strictly 1 Hz.
     if (this->last_1hz_ms_ != 0 && static_cast<uint32_t>(now_ms - this->last_1hz_ms_) < 1000)
       return this->result_();
     this->last_1hz_ms_ = now_ms;
 
-    // Diagnostic only: rate of change of the variance-derived activity.
-    // It is also used as temporal evidence for entry below; it is NOT a
-    // standalone threshold.
-    const float activity = std::sqrt(std::fmax(0.0f, variance));
-    if (this->have_previous_activity_)
-      this->change_rate_ = activity - this->previous_activity_;
-    else
-      this->change_rate_ = 0.0f;
-    this->previous_activity_ = activity;
-    this->have_previous_activity_ = true;
+    if (!this->feature_ready_) return this->result_();
+
+    const float raw_change = this->spatial_change_;
+    this->change_rate_ = raw_change - this->previous_spatial_change_;
+    this->previous_spatial_change_ = raw_change;
 
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
-      if (this->calibration_count_ < kCalibrationSamples)
-        this->calibration_[this->calibration_count_++] = variance;
-
+      if (this->calibration_count_ < kCalibrationSamples) {
+        this->calibration_[this->calibration_count_++] = this->feature_activity_;
+      }
       if (static_cast<uint32_t>(now_ms - this->calibration_start_ms_) >= kCalibrationMs &&
           this->calibration_count_ >= kMinimumCalibrationSamples) {
         this->finish_calibration_();
       }
+      this->previous_feature_activity_ = this->feature_activity_;
+      this->have_previous_feature_ = true;
       return this->result_();
     }
 
-    this->threshold_ = this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_;
+    // Robust normalized feature score. The score is relative to the learned
+    // quiet distribution, not to raw CSI amplitude.
+    const float normalized = (this->feature_activity_ - this->baseline_) /
+                             std::fmax(0.001f, this->feature_scale_);
+    this->feature_score_ = 0.65f * this->feature_score_ + 0.35f * std::fmax(0.0f, normalized);
 
-    const float quiet_activity = std::sqrt(std::fmax(1.0f, this->baseline_));
-    const float ratio = activity / quiet_activity;
-    const float change = std::fmax(0.0f, ratio - 1.0f);
-    // Faster response than the previous 80/20 smoothing. The variance itself
-    // is already windowed, so excessive second-stage smoothing was suppressing
-    // real transitions.
-    this->change_score_ = 0.60f * this->change_score_ + 0.40f * change;
-
-    if (!this->active_ && !this->rearm_required_ && change < kQuietChange)
-      this->baseline_ = 0.997f * this->baseline_ + 0.003f * variance;
+    // Common-mode RF changes tend to affect all subcarriers similarly and
+    // therefore have low normalized spatial change. Motion must have both
+    // enough spatial-temporal change and a coherent transition.
+    const bool elevated = this->feature_score_ >= kModerateScore;
+    const bool strong = this->feature_score_ >= kStrongScore;
+    const bool rising = this->change_rate_ >= kRiseRate;
+    const bool falling = this->change_rate_ <= -kFallRate;
 
     if (!this->active_) {
       if (this->rearm_required_) {
-        if (change < kQuietChange) {
+        if (this->feature_score_ < kQuietScore && raw_change < kQuietSpatialChange) {
           if (++this->quiet_seconds_ >= kRearmSeconds) {
             this->rearm_required_ = false;
             this->quiet_seconds_ = 0;
@@ -107,27 +88,18 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      // Entry is now a temporal signature rather than accumulated amplitude
-      // alone. A meaningful rise in activity is the start of an event. Once
-      // the signal is elevated, either a sustained elevated level or a
-      // subsequent falling edge completes the signature. Change rate is used
-      // as evidence, never as an absolute movement threshold.
-      const bool elevated = this->change_score_ >= kModerateChange;
-      const bool strong = this->change_score_ >= kStrongChange;
-      const bool rising = this->change_rate_ >= kRiseRate;
-      const bool falling = this->change_rate_ <= -kFallRate;
-
+      // A genuine event should create a spatially structured transition.
       if (rising && elevated)
         this->signature_score_ += 2;
-      else if (strong)
+      else if (strong && raw_change >= kMinimumSpatialChange)
         this->signature_score_ += 1;
       else if (falling && this->signature_score_ > 0)
         this->signature_score_ += 1;
       else
         this->signature_score_ = std::max(0, this->signature_score_ - 1);
 
-      if (elevated)
-        this->elevated_seconds_++;
+      if (elevated && raw_change >= kMinimumSpatialChange)
+        ++this->elevated_seconds_;
       else
         this->elevated_seconds_ = 0;
 
@@ -143,7 +115,7 @@ class MvsMotionDetector {
         this->elevated_seconds_ = 0;
       }
     } else if (static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0) {
-      if (this->change_score_ < kExitChange)
+      if (this->feature_score_ < kExitScore && raw_change < kMinimumSpatialChange)
         ++this->exit_seconds_;
       else
         this->exit_seconds_ = 0;
@@ -158,27 +130,113 @@ class MvsMotionDetector {
       }
     }
 
+    // Adapt only when clearly quiet. This prevents a new RF state during an
+    // active event from becoming the new motion-free reference.
+    if (!this->active_ && !this->rearm_required_ && this->feature_score_ < kQuietScore &&
+        raw_change < kQuietSpatialChange) {
+      this->baseline_ = 0.997f * this->baseline_ + 0.003f * this->feature_activity_;
+    }
+
+    this->previous_feature_activity_ = this->feature_activity_;
+    this->have_previous_feature_ = true;
     return this->result_();
   }
 
  private:
+  void update_variance_(const CsiPacket &packet) {
+    if (packet.raw_bytes == nullptr || packet.len < 4) return;
+    // Preserve the diagnostic variance concept from the previous MVS.
+    float mean = 0.0f;
+    const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
+    if (pairs == 0) return;
+    for (uint16_t i = 0; i < pairs; ++i) {
+      const float a = static_cast<float>(packet.raw_bytes[2 * i]);
+      const float b = static_cast<float>(packet.raw_bytes[2 * i + 1]);
+      mean += std::sqrt(a * a + b * b);
+    }
+    mean /= pairs;
+    float v = 0.0f;
+    for (uint16_t i = 0; i < pairs; ++i) {
+      const float a = static_cast<float>(packet.raw_bytes[2 * i]);
+      const float b = static_cast<float>(packet.raw_bytes[2 * i + 1]);
+      const float m = std::sqrt(a * a + b * b);
+      const float d = m - mean;
+      v += d * d;
+    }
+    this->variance_ = v / pairs;
+  }
+
+  void extract_features_(const CsiPacket &packet) {
+    this->feature_ready_ = false;
+    if (packet.raw_bytes == nullptr || packet.len < 8) return;
+
+    const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
+    float magnitudes[kFeatureBins]{};
+    float mean = 0.0f;
+    for (uint16_t i = 0; i < pairs; ++i) {
+      const float a = static_cast<float>(packet.raw_bytes[2 * i]);
+      const float b = static_cast<float>(packet.raw_bytes[2 * i + 1]);
+      magnitudes[i] = std::sqrt(a * a + b * b);
+      mean += magnitudes[i];
+    }
+    mean /= pairs;
+    if (mean < 1.0f) return;
+
+    // Normalize each packet by its own mean. This suppresses common-mode RSSI
+    // and gain changes while retaining the relative CSI shape.
+    float norm[kFeatureBins]{};
+    float norm_std = 0.0f;
+    for (uint16_t i = 0; i < pairs; ++i) norm[i] = magnitudes[i] / mean;
+    for (uint16_t i = 0; i < pairs; ++i) {
+      const float d = norm[i] - 1.0f;
+      norm_std += d * d;
+    }
+    norm_std = std::sqrt(norm_std / pairs);
+
+    float temporal = 0.0f;
+    float dot = 0.0f, prev_norm_sq = 0.0f, norm_sq = 0.0f;
+    if (this->have_previous_vector_ && this->previous_bins_ == pairs) {
+      for (uint16_t i = 0; i < pairs; ++i) {
+        const float d = norm[i] - this->previous_norm_[i];
+        temporal += std::fabs(d);
+        dot += norm[i] * this->previous_norm_[i];
+        norm_sq += norm[i] * norm[i];
+        prev_norm_sq += this->previous_norm_[i] * this->previous_norm_[i];
+      }
+      temporal /= pairs;
+    }
+
+    const float cosine = (norm_sq > 0.001f && prev_norm_sq > 0.001f)
+                           ? dot / std::sqrt(norm_sq * prev_norm_sq) : 1.0f;
+    this->coherence_ = std::fmax(0.0f, std::fmin(1.0f, cosine));
+    this->spatial_change_ = temporal;
+
+    // Feature activity deliberately combines spatial shape change and loss of
+    // temporal coherence. A uniform RF/gain shift largely disappears after
+    // normalization; a localized CSI pattern change survives.
+    const float incoherence = 1.0f - this->coherence_;
+    this->feature_activity_ = 0.70f * temporal + 0.30f * incoherence + 0.15f * norm_std;
+
+    for (uint16_t i = 0; i < pairs; ++i) this->previous_norm_[i] = norm[i];
+    this->previous_bins_ = pairs;
+    this->have_previous_vector_ = true;
+    this->feature_ready_ = true;
+  }
+
   void finish_calibration_() {
-    // Robust calibration: discard the upper 10% of samples first, then use
-    // the median of the remaining quiet distribution as the noise reference.
     std::sort(this->calibration_, this->calibration_ + this->calibration_count_);
     const uint16_t usable = std::max<uint16_t>(1, (this->calibration_count_ * 9) / 10);
     const uint16_t median_index = usable / 2;
-    this->baseline_ = std::fmax(1.0f, this->calibration_[median_index]);
+    this->baseline_ = std::fmax(0.001f, this->calibration_[median_index]);
 
     float deviations[kCalibrationSamples];
     for (uint16_t i = 0; i < usable; ++i)
       deviations[i] = std::fabs(this->calibration_[i] - this->baseline_);
     std::sort(deviations, deviations + usable);
     const float mad = deviations[median_index];
-    this->variance_stddev_ = std::fmax(1.0f, 1.4826f * mad);
-
+    this->feature_scale_ = std::fmax(0.001f, 1.4826f * mad);
     this->calibrated_ = true;
-    this->threshold_ = this->baseline_ + this->variance_stddev_ * this->sigma_multiplier_;
+    this->threshold_ = this->baseline_ + this->feature_scale_ * this->sigma_multiplier_;
   }
 
   MvsMotionResult result_() const {
@@ -188,10 +246,13 @@ class MvsMotionDetector {
     r.threshold = this->threshold_;
     r.baseline = this->baseline_;
     r.change_rate = this->change_rate_;
+    r.spatial_change = this->spatial_change_;
+    r.coherence = this->coherence_;
+    r.feature_score = this->feature_score_;
     return r;
   }
 
-  static constexpr uint16_t kRawWindow = 64;
+  static constexpr uint16_t kFeatureBins = 64;
   static constexpr uint16_t kCalibrationSamples = 300;
   static constexpr uint16_t kMinimumCalibrationSamples = 240;
   static constexpr uint32_t kCalibrationMs = 300000;
@@ -201,46 +262,53 @@ class MvsMotionDetector {
   static constexpr uint16_t kMinimumElevatedSeconds = 2;
   static constexpr int kRequiredSignatureScore = 3;
   static constexpr int kSustainedSignatureScore = 4;
-  static constexpr float kStrongChange = 0.75f;
-  static constexpr float kModerateChange = 0.40f;
-  static constexpr float kQuietChange = 0.15f;
-  static constexpr float kExitChange = 0.20f;
-  static constexpr float kRiseRate = 12.0f;
-  static constexpr float kFallRate = 12.0f;
+  static constexpr float kModerateScore = 2.0f;
+  static constexpr float kStrongScore = 3.5f;
+  static constexpr float kQuietScore = 0.8f;
+  static constexpr float kExitScore = 1.0f;
+  static constexpr float kMinimumSpatialChange = 0.035f;
+  static constexpr float kQuietSpatialChange = 0.015f;
+  static constexpr float kRiseRate = 0.02f;
+  static constexpr float kFallRate = 0.02f;
 
-  float raw_[kRawWindow]{};
-  uint16_t raw_count_{0};
   uint16_t window_samples_{32};
+  float sigma_multiplier_{2.0f};
+  uint8_t enter_hits_{2};
+  uint8_t exit_hits_{2};
+  uint32_t hold_time_ms_{60000};
+  uint32_t hold_until_ms_{0};
 
   float calibration_[kCalibrationSamples]{};
   uint16_t calibration_count_{0};
   uint32_t calibration_start_ms_{0};
   uint32_t last_1hz_ms_{0};
 
-  float sigma_multiplier_{2.0f};
-  uint8_t enter_hits_{2};
-  uint8_t exit_hits_{2};
+  float previous_norm_[kFeatureBins]{};
+  uint16_t previous_bins_{0};
+  bool have_previous_vector_{false};
+  bool feature_ready_{false};
+  bool calibrated_{false};
+  bool active_{false};
+  bool rearm_required_{false};
+  bool have_previous_feature_{false};
+
+  float baseline_{0.0f};
+  float feature_scale_{0.0f};
+  float variance_{0.0f};
+  float threshold_{0.0f};
+  float feature_activity_{0.0f};
+  float feature_score_{0.0f};
+  float spatial_change_{0.0f};
+  float previous_spatial_change_{0.0f};
+  float change_rate_{0.0f};
+  float coherence_{1.0f};
+  float previous_feature_activity_{0.0f};
+
   int signature_score_{0};
   uint16_t enter_window_seconds_{0};
   uint16_t elevated_seconds_{0};
   uint16_t exit_seconds_{0};
   uint16_t quiet_seconds_{0};
-
-  uint32_t hold_time_ms_{60000};
-  uint32_t hold_until_ms_{0};
-
-  bool active_{false};
-  bool calibrated_{false};
-  bool rearm_required_{false};
-  bool have_previous_activity_{false};
-
-  float baseline_{0.0f};
-  float variance_stddev_{0.0f};
-  float variance_{0.0f};
-  float threshold_{0.0f};
-  float change_score_{0.0f};
-  float previous_activity_{0.0f};
-  float change_rate_{0.0f};
 };
 
 }  // namespace esp_wifi_sensing
