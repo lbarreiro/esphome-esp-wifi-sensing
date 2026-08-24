@@ -21,10 +21,8 @@ struct MvsMotionResult {
 };
 
 // MVS (Motion Variance Signature) v2.
-// Uses variance for diagnostics, but motion is decided from a normalized
-// spatial-temporal CSI signature: per-subcarrier magnitude change, temporal
-// change and spatial contrast. Common-mode amplitude changes are normalized
-// out so RF/gain changes are less likely to look like motion.
+// Motion is decided from independent spatial/temporal CSI evidence rather
+// than requiring one exact temporal signature. Variance remains diagnostic.
 class MvsMotionDetector {
  public:
   void set_window_samples(uint16_t value) { this->window_samples_ = value; }
@@ -49,15 +47,11 @@ class MvsMotionDetector {
 
     if (!this->calibrated_) {
       if (this->calibration_start_ms_ == 0) this->calibration_start_ms_ = now_ms;
-      if (this->calibration_count_ < kCalibrationSamples) {
+      if (this->calibration_count_ < kCalibrationSamples)
         this->calibration_[this->calibration_count_++] = this->feature_activity_;
-      }
       if (static_cast<uint32_t>(now_ms - this->calibration_start_ms_) >= kCalibrationMs &&
-          this->calibration_count_ >= kMinimumCalibrationSamples) {
+          this->calibration_count_ >= kMinimumCalibrationSamples)
         this->finish_calibration_();
-      }
-      this->previous_feature_activity_ = this->feature_activity_;
-      this->have_previous_feature_ = true;
       return this->result_();
     }
 
@@ -65,12 +59,11 @@ class MvsMotionDetector {
                              std::fmax(0.001f, this->feature_scale_);
     this->feature_score_ = 0.65f * this->feature_score_ + 0.35f * std::fmax(0.0f, normalized);
 
-    const bool elevated = this->feature_score_ >= kModerateScore;
-    const bool strong = this->feature_score_ >= kStrongScore;
-    // Change-rate is deliberately kept in the normalized spatial-change
-    // scale. It is evidence of a transition, not an absolute motion metric.
-    const bool rising = this->change_rate_ >= kRiseRate;
-    const bool falling = this->change_rate_ <= -kFallRate;
+    const bool feature_evidence = this->feature_score_ >= kModerateScore;
+    const bool feature_strong = this->feature_score_ >= kStrongScore;
+    const bool spatial_evidence = raw_change >= kMinimumSpatialChange;
+    const bool spatial_strong = raw_change >= kStrongSpatialChange;
+    const bool rate_evidence = std::fabs(this->change_rate_) >= kRiseRate;
 
     if (!this->active_) {
       if (this->rearm_required_) {
@@ -85,16 +78,24 @@ class MvsMotionDetector {
         return this->result_();
       }
 
-      if (rising && elevated)
+      // Multi-feature entry: any two independent strong/moderate evidences
+      // within the same short window are enough. This avoids requiring one
+      // very specific rise/fall shape while still rejecting isolated spikes.
+      int evidence = 0;
+      if (feature_strong) evidence += 2;
+      else if (feature_evidence) evidence += 1;
+      if (spatial_strong) evidence += 2;
+      else if (spatial_evidence) evidence += 1;
+      if (rate_evidence) evidence += 1;
+
+      if (evidence >= kStrongEvidence)
         this->signature_score_ += 2;
-      else if (strong && raw_change >= kMinimumSpatialChange)
-        this->signature_score_ += 1;
-      else if (falling && this->signature_score_ > 0)
+      else if (evidence >= kModerateEvidence)
         this->signature_score_ += 1;
       else
         this->signature_score_ = std::max(0, this->signature_score_ - 1);
 
-      if (elevated && raw_change >= kMinimumSpatialChange)
+      if (evidence >= kModerateEvidence)
         ++this->elevated_seconds_;
       else
         this->elevated_seconds_ = 0;
@@ -127,21 +128,18 @@ class MvsMotionDetector {
     }
 
     if (!this->active_ && !this->rearm_required_ && this->feature_score_ < kQuietScore &&
-        raw_change < kQuietSpatialChange) {
+        raw_change < kQuietSpatialChange)
       this->baseline_ = 0.997f * this->baseline_ + 0.003f * this->feature_activity_;
-    }
 
-    this->previous_feature_activity_ = this->feature_activity_;
-    this->have_previous_feature_ = true;
     return this->result_();
   }
 
  private:
   void update_variance_(const CsiPacket &packet) {
     if (packet.raw_bytes == nullptr || packet.len < 4) return;
-    float mean = 0.0f;
     const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
     if (pairs == 0) return;
+    float mean = 0.0f;
     for (uint16_t i = 0; i < pairs; ++i) {
       const float a = static_cast<float>(packet.raw_bytes[2 * i]);
       const float b = static_cast<float>(packet.raw_bytes[2 * i + 1]);
@@ -162,7 +160,6 @@ class MvsMotionDetector {
   void extract_features_(const CsiPacket &packet) {
     this->feature_ready_ = false;
     if (packet.raw_bytes == nullptr || packet.len < 8) return;
-
     const uint16_t pairs = std::min<uint16_t>(packet.len / 2, kFeatureBins);
     float magnitudes[kFeatureBins]{};
     float mean = 0.0f;
@@ -201,7 +198,6 @@ class MvsMotionDetector {
                            ? dot / std::sqrt(norm_sq * prev_norm_sq) : 1.0f;
     this->coherence_ = std::fmax(0.0f, std::fmin(1.0f, cosine));
     this->spatial_change_ = temporal;
-
     const float incoherence = 1.0f - this->coherence_;
     this->feature_activity_ = 0.70f * temporal + 0.30f * incoherence + 0.15f * norm_std;
 
@@ -250,14 +246,16 @@ class MvsMotionDetector {
   static constexpr uint16_t kMinimumElevatedSeconds = 2;
   static constexpr int kRequiredSignatureScore = 3;
   static constexpr int kSustainedSignatureScore = 4;
+  static constexpr int kModerateEvidence = 2;
+  static constexpr int kStrongEvidence = 3;
   static constexpr float kModerateScore = 2.0f;
   static constexpr float kStrongScore = 3.5f;
   static constexpr float kQuietScore = 0.8f;
   static constexpr float kExitScore = 1.0f;
   static constexpr float kMinimumSpatialChange = 0.035f;
+  static constexpr float kStrongSpatialChange = 0.10f;
   static constexpr float kQuietSpatialChange = 0.015f;
   static constexpr float kRiseRate = 0.02f;
-  static constexpr float kFallRate = 0.02f;
 
   uint16_t window_samples_{32};
   float sigma_multiplier_{2.0f};
@@ -278,7 +276,6 @@ class MvsMotionDetector {
   bool calibrated_{false};
   bool active_{false};
   bool rearm_required_{false};
-  bool have_previous_feature_{false};
 
   float baseline_{0.0f};
   float feature_scale_{0.0f};
@@ -290,7 +287,6 @@ class MvsMotionDetector {
   float previous_spatial_change_{0.0f};
   float change_rate_{0.0f};
   float coherence_{1.0f};
-  float previous_feature_activity_{0.0f};
 
   int signature_score_{0};
   uint16_t enter_window_seconds_{0};
