@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
 #include "espidf_csi_driver.h"
