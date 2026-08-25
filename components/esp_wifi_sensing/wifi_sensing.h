@@ -15,9 +15,6 @@
 #include "adaptive_motion_detector.h"
 #include "esp_radar_motion_detector.h"
 #include "mvs_motion_detector.h"
-#include "diagnostic_publish_rate_limiter.h"
-#include "esphome/components/binary_sensor/binary_sensor.h"
-#include "esphome/components/sensor/sensor.h"
 
 namespace esphome { namespace esp_wifi_sensing {
 
@@ -47,18 +44,6 @@ class ESPWiFiSensing : public Component {
   void set_mvs_enter_hits(uint8_t v) { mvs_detector_.set_enter_hits(v); }
   void set_mvs_exit_hits(uint8_t v) { mvs_detector_.set_exit_hits(v); }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *v) { motion_binary_sensor_ = v; }
-  void set_metric_sensor(sensor::Sensor *v) { metric_sensor_ = v; }
-  void set_baseline_mean_sensor(sensor::Sensor *v) { baseline_mean_sensor_ = v; }
-  void set_baseline_stddev_sensor(sensor::Sensor *v) { baseline_stddev_sensor_ = v; }
-  void set_adaptive_threshold_sensor(sensor::Sensor *v) { adaptive_threshold_sensor_ = v; }
-  void set_csi_jitter_sensor(sensor::Sensor *v) { csi_jitter_sensor_ = v; }
-  void set_csi_enter_level_sensor(sensor::Sensor *v) { csi_enter_level_sensor_ = v; }
-  void set_csi_variance_sensor(sensor::Sensor *v) { csi_variance_sensor_ = v; }
-  void set_csi_variance_threshold_sensor(sensor::Sensor *v) { csi_variance_threshold_sensor_ = v; }
-  void set_csi_change_rate_sensor(sensor::Sensor *v) { csi_change_rate_sensor_ = v; }
-  void set_csi_spatial_change_sensor(sensor::Sensor *v) { csi_spatial_change_sensor_ = v; }
-  void set_csi_coherence_sensor(sensor::Sensor *v) { csi_coherence_sensor_ = v; }
-  void set_csi_feature_score_sensor(sensor::Sensor *v) { csi_feature_score_sensor_ = v; }
  protected:
   static void csi_callback_(void *ctx, wifi_csi_info_t *data);
   bool start_csi_(); bool start_ping_();
@@ -73,14 +58,8 @@ class ESPWiFiSensing : public Component {
   esp_ping_handle_t ping_handle_{nullptr};
   EspIdfCsiDriver driver_{}; CsiPipeline pipeline_{}; ThresholdAlgorithm algorithm_{};
   VarianceAlgorithm variance_algorithm_{}; CsiAmplitudeAlgorithm amplitude_algorithm_{}; JitterAlgorithm jitter_algorithm_{};
-  AdaptiveMotionDetector motion_detector_{}; EspRadarMotionDetector esp_radar_detector_{}; MvsMotionDetector mvs_detector_{}; DiagnosticPublishRateLimiter diagnostic_publish_rate_limiter_{};
+  AdaptiveMotionDetector motion_detector_{}; EspRadarMotionDetector esp_radar_detector_{}; MvsMotionDetector mvs_detector_{};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
-  sensor::Sensor *metric_sensor_{nullptr}; sensor::Sensor *baseline_mean_sensor_{nullptr};
-  sensor::Sensor *baseline_stddev_sensor_{nullptr}; sensor::Sensor *adaptive_threshold_sensor_{nullptr};
-  sensor::Sensor *csi_jitter_sensor_{nullptr}; sensor::Sensor *csi_enter_level_sensor_{nullptr};
-  sensor::Sensor *csi_variance_sensor_{nullptr}; sensor::Sensor *csi_variance_threshold_sensor_{nullptr};
-  sensor::Sensor *csi_change_rate_sensor_{nullptr}; sensor::Sensor *csi_spatial_change_sensor_{nullptr};
-  sensor::Sensor *csi_coherence_sensor_{nullptr}; sensor::Sensor *csi_feature_score_sensor_{nullptr};
 };
 
 } }
