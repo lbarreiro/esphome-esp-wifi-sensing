@@ -144,35 +144,12 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
   if (self->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) {
     const EspRadarMotionResult radar_result = self->esp_radar_detector_.update(metric, timestamp);
     if (self->motion_binary_sensor_ != nullptr) self->motion_binary_sensor_->publish_state(radar_result.active);
-    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
-      if (self->metric_sensor_ != nullptr) self->metric_sensor_->publish_state(metric);
-      if (self->baseline_mean_sensor_ != nullptr) self->baseline_mean_sensor_->publish_state(radar_result.smooth);
-      if (self->baseline_stddev_sensor_ != nullptr) self->baseline_stddev_sensor_->publish_state(radar_result.jitter);
-      if (self->adaptive_threshold_sensor_ != nullptr) self->adaptive_threshold_sensor_->publish_state(radar_result.enter_level);
-      if (self->csi_jitter_sensor_ != nullptr) self->csi_jitter_sensor_->publish_state(radar_result.jitter);
-      if (self->csi_enter_level_sensor_ != nullptr) self->csi_enter_level_sensor_->publish_state(radar_result.enter_level);
-    }
   } else if (self->selected_algorithm_ == CsiAlgorithm::MVS) {
     const MvsMotionResult mvs_result = self->mvs_detector_.update(processed_packet, timestamp);
     if (self->motion_binary_sensor_ != nullptr) self->motion_binary_sensor_->publish_state(mvs_result.active);
-    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
-      if (self->metric_sensor_ != nullptr) self->metric_sensor_->publish_state(metric);
-      if (self->csi_variance_sensor_ != nullptr) self->csi_variance_sensor_->publish_state(mvs_result.variance);
-      if (self->csi_variance_threshold_sensor_ != nullptr) self->csi_variance_threshold_sensor_->publish_state(mvs_result.threshold);
-      if (self->csi_change_rate_sensor_ != nullptr) self->csi_change_rate_sensor_->publish_state(mvs_result.change_rate);
-      if (self->csi_spatial_change_sensor_ != nullptr) self->csi_spatial_change_sensor_->publish_state(mvs_result.spatial_change);
-      if (self->csi_coherence_sensor_ != nullptr) self->csi_coherence_sensor_->publish_state(mvs_result.coherence);
-      if (self->csi_feature_score_sensor_ != nullptr) self->csi_feature_score_sensor_->publish_state(mvs_result.feature_score);
-    }
   } else {
     const AdaptiveMotionDetectorResult motion_result = self->motion_detector_.update(metric, timestamp);
     if (self->motion_binary_sensor_ != nullptr) self->motion_binary_sensor_->publish_state(motion_result.motion);
-    if (self->diagnostic_publish_rate_limiter_.should_publish(timestamp)) {
-      if (self->metric_sensor_ != nullptr) self->metric_sensor_->publish_state(metric);
-      if (self->baseline_mean_sensor_ != nullptr) self->baseline_mean_sensor_->publish_state(motion_result.baseline_mean);
-      if (self->baseline_stddev_sensor_ != nullptr) self->baseline_stddev_sensor_->publish_state(motion_result.baseline_stddev);
-      if (self->adaptive_threshold_sensor_ != nullptr) self->adaptive_threshold_sensor_->publish_state(motion_result.adaptive_threshold);
-    }
   }
   self->pipeline_.clear_new_sample();
 }
@@ -184,7 +161,7 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Algorithm: %s", csi_algorithm_to_string(this->selected_algorithm_));
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   if (this->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) ESP_LOGCONFIG(TAG, "  ESP Radar FSM: jitter + smooth + enter/exit hysteresis + active filter");
-  if (this->selected_algorithm_ == CsiAlgorithm::MVS) ESP_LOGCONFIG(TAG, "  MVS v2: normalized spatial-temporal CSI features + robust quiet baseline");
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS) ESP_LOGCONFIG(TAG, "  MVS ML: statistical CSI features + MLP classifier");
 }
 
 }  // namespace esp_wifi_sensing
