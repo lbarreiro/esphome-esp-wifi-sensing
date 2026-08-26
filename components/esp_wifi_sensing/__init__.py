@@ -43,7 +43,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ALGORITHM, default="absolute_sum"): cv.enum(ALGORITHMS, lower=True),
         cv.Optional(CONF_GAIN_COMPENSATION, default=False): cv.boolean,
         cv.Optional(CONF_ADAPTIVE_THRESHOLD, default=True): cv.boolean,
-        cv.Optional(CONF_THRESHOLD, default=6): cv.positive_int,
+        # ML/MVS score is a continuous 0-10 value; allow fractional thresholds.
+        cv.Optional(CONF_THRESHOLD, default=5.0): cv.float_range(min=0.0, max=10.0),
         cv.Optional(CONF_SIGMA_MULTIPLIER, default=3.0): cv.float_,
         cv.Optional(CONF_BASELINE_RISE_TIME, default="10min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BASELINE_FALL_TIME, default="60min"): cv.positive_time_period_milliseconds,
