@@ -1,5 +1,4 @@
 #pragma once
-
 #include <cstdint>
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
@@ -16,25 +15,22 @@
 #include "adaptive_motion_detector.h"
 #include "esp_radar_motion_detector.h"
 #include "mvs_motion_detector.h"
-
 namespace esphome { namespace esp_wifi_sensing {
-
 enum class CsiAlgorithm { ABSOLUTE_SUM, VARIANCE, AMPLITUDE, JITTER, ESP_RADAR, MVS };
-
 class ESPWiFiSensing : public Component {
  public:
   void setup() override; void loop() override; void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { selected_algorithm_ = algorithm; }
   void set_adaptive_threshold_enabled(bool enabled) { motion_detector_.set_adaptive_threshold_enabled(enabled); }
-  void set_fixed_threshold(uint32_t threshold) { motion_detector_.set_fixed_threshold(threshold); }
+  void set_fixed_threshold(uint32_t threshold) { motion_detector_.set_fixed_threshold(threshold); mvs_detector_.set_threshold(static_cast<float>(threshold)); }
   void set_sigma_multiplier(float multiplier) { motion_detector_.set_sigma_multiplier(multiplier); }
   void set_baseline_rise_time(uint32_t v) { motion_detector_.set_baseline_rise_time_ms(v); }
   void set_baseline_fall_time(uint32_t v) { motion_detector_.set_baseline_fall_time_ms(v); }
   void set_learning_delay(uint32_t v) { motion_detector_.set_learning_delay_ms(v); }
   void set_debounce(uint32_t v) { motion_detector_.set_debounce_samples(v); }
   void set_warmup_time(uint32_t v) { motion_detector_.set_warmup_time_ms(v); }
-  void set_motion_hold_time(uint32_t v) { motion_detector_.set_motion_hold_time_ms(v); }
+  void set_motion_hold_time(uint32_t v) { motion_detector_.set_motion_hold_time_ms(v); mvs_detector_.set_hold_time_ms(v); }
   void set_persistence_samples(uint8_t v) { motion_detector_.set_persistence_samples(v); }
   void set_motion_sensitivity(float v) { esp_radar_detector_.set_sensitivity(v); }
   void set_active_jitter_min(float v) { esp_radar_detector_.set_active_jitter_min(v); }
@@ -62,5 +58,4 @@ class ESPWiFiSensing : public Component {
   AdaptiveMotionDetector motion_detector_{}; EspRadarMotionDetector esp_radar_detector_{}; MvsMotionDetector mvs_detector_{};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
 };
-
 } }
