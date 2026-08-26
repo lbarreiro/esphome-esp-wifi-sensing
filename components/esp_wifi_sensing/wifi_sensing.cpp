@@ -86,14 +86,18 @@ bool ESPWiFiSensing::start_ping_() {
   esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
   ip_addr_t target_addr{}; target_addr.type = IPADDR_TYPE_V4;
   ip4_addr_set_u32(ip_2_ip4(&target_addr), ip_info.gw.addr);
-  ping_config.target_addr = target_addr; ping_config.count = ESP_PING_COUNT_INFINITE;
-  ping_config.interval_ms = 100; ping_config.timeout_ms = 80; ping_config.data_size = 32;
+  ping_config.target_addr = target_addr;
+  ping_config.count = ESP_PING_COUNT_INFINITE;
+  // Match ESPectre's default internal traffic rate: 100 packets/s.
+  ping_config.interval_ms = 10;
+  ping_config.timeout_ms = 80;
+  ping_config.data_size = 32;
   esp_ping_callbacks_t callbacks{};
   err = esp_ping_new_session(&ping_config, &callbacks, &this->ping_handle_);
   if (err != ESP_OK) { this->ping_handle_ = nullptr; return false; }
   err = esp_ping_start(this->ping_handle_);
   if (err != ESP_OK) { esp_ping_delete_session(this->ping_handle_); this->ping_handle_ = nullptr; return false; }
-  ESP_LOGI(TAG, "Router ping running: interval=100ms (~10 pings/s)");
+  ESP_LOGI(TAG, "Router ping running: interval=10ms (~100 pings/s)");
   return true;
 }
 
@@ -157,11 +161,11 @@ void ESPWiFiSensing::csi_callback_(void *ctx, wifi_csi_info_t *data) {
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
   ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
-  ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
+  ESP_LOGCONFIG(TAG, "  Router ping: 100 pings/s");
   ESP_LOGCONFIG(TAG, "  Algorithm: %s", csi_algorithm_to_string(this->selected_algorithm_));
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   if (this->selected_algorithm_ == CsiAlgorithm::ESP_RADAR) ESP_LOGCONFIG(TAG, "  ESP Radar FSM: jitter + smooth + enter/exit hysteresis + active filter");
-  if (this->selected_algorithm_ == CsiAlgorithm::MVS) ESP_LOGCONFIG(TAG, "  MVS ML: statistical CSI features + MLP classifier");
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS) ESP_LOGCONFIG(TAG, "  MVS ML: ESPectre-compatible statistical features + MLP classifier");
 }
 
 }  // namespace esp_wifi_sensing
