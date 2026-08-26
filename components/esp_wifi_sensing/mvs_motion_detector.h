@@ -22,15 +22,16 @@ struct MvsMotionResult {
   float feature_score{0.0f};
 };
 
-// MVS-ML: our MVS implementation of the statistical-ML pipeline used by
-// ESPectre ML. The detector keeps the MVS public name/API, but the decision
-// path is now: fixed 12 subcarriers -> spatial turbulence -> Hampel ->
-// 100-sample window -> 9 statistical features -> 9x32x16x1 MLP.
-// No ESPectre runtime code is linked; inference is implemented locally.
+// MVS-ML: local implementation of the ESPectre statistical-ML approach.
+// Decision path: spatial turbulence -> Hampel -> 100-sample window ->
+// 9 statistical features -> 9x32x16x1 MLP -> consecutive-hit state machine.
 class MvsMotionDetector {
  public:
+  // Kept for YAML/API compatibility. The ML reference uses a fixed 100-sample
+  // feature window and evaluates every 25 packets.
   void set_window_samples(uint16_t) {}
   void set_threshold_multiplier(float) {}
+  void set_threshold(float value) { this->threshold_ = value; }
   void set_enter_hits(uint8_t value) { this->enter_hits_ = value; }
   void set_exit_hits(uint8_t value) { this->exit_hits_ = value; }
   void set_hold_time_ms(uint32_t value) { this->hold_time_ms_ = value; }
@@ -47,9 +48,6 @@ class MvsMotionDetector {
 
     this->latest_turbulence_ = filtered;
     if (this->count_ < kWindow) return this->result_();
-
-    // ESPectre evaluates every 25 packets; publication remains controlled by
-    // the ESPHome diagnostic rate limiter outside this detector.
     if ((this->packet_counter_ % kEvaluationInterval) != 0) return this->result_();
 
     float ordered[kWindow];
@@ -65,12 +63,10 @@ class MvsMotionDetector {
     this->feature_score_ = score;
     this->change_rate_ = score - previous_score;
 
-    // Diagnostics retain useful names without feeding the old hand-tuned FSM.
     this->variance_ = features[1] * features[1];
     this->spatial_change_ = features[8];
     this->coherence_ = features[6];
     this->baseline_ = features[0];
-    this->threshold_ = this->threshold_;
 
     const bool inference_motion = score >= this->threshold_;
 
@@ -82,12 +78,15 @@ class MvsMotionDetector {
       this->enter_hits_count_ = 0;
     }
 
-    // Match the ESPectre edge policy: consecutive evaluation hits decide the
-    // edge. The existing 60s hold time is retained for this project.
+    // Once MVS enters motion, it MUST remain ON for the complete configured
+    // hold interval. The hold timer starts at the actual ON transition and is
+    // never shortened by a low ML score. After the interval, the detector can
+    // leave only after the configured number of consecutive negative hits.
     if (!this->active_ && this->enter_hits_count_ >= this->enter_hits_) {
       this->active_ = true;
       this->hold_until_ms_ = now_ms + this->hold_time_ms_;
       this->enter_hits_count_ = 0;
+      this->exit_hits_count_ = 0;
     }
 
     if (this->active_ && static_cast<int32_t>(now_ms - this->hold_until_ms_) >= 0 &&
@@ -106,13 +105,10 @@ class MvsMotionDetector {
   static constexpr float kHampelThreshold = 5.0f;
   static constexpr float kHampelScale = 1.4826f;
 
-  // ESPectre's fixed C6/HT20 ML band: 12 non-consecutive, DC excluded.
   static constexpr uint8_t kSubcarriers[12] = {12, 14, 16, 18, 20, 24, 28, 36, 40, 44, 48, 52};
 
   float calculate_turbulence_(const CsiPacket &packet) const {
     if (packet.raw_bytes == nullptr) return NAN;
-    // ESP CSI is I/Q interleaved. The repository's CSI parser exposes the
-    // same raw byte order; each subcarrier occupies two signed int8 values.
     if (packet.len < 2 * 53) return NAN;
 
     float amplitudes[12];
@@ -131,7 +127,6 @@ class MvsMotionDetector {
       const float d = amp - mean;
       variance += d * d;
     }
-    // ML is trained on raw spatial std, not CV normalization.
     return std::sqrt(variance / 12.0f);
   }
 
@@ -230,7 +225,6 @@ class MvsMotionDetector {
   float predict_(const float *features) const {
     float h1[32]{};
     float h2[16]{};
-
     float x[9];
     for (uint8_t i = 0; i < 9; ++i)
       x[i] = (features[i] - mvs_ml::FEATURE_MEAN[i]) / mvs_ml::FEATURE_SCALE[i];
@@ -276,7 +270,7 @@ class MvsMotionDetector {
   uint8_t exit_hits_{3};
   uint8_t enter_hits_count_{0};
   uint8_t exit_hits_count_{0};
-  uint32_t hold_time_ms_{60000};
+  uint32_t hold_time_ms_{120000};
   uint32_t hold_until_ms_{0};
   bool active_{false};
 
