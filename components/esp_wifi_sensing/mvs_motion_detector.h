@@ -34,7 +34,10 @@ class MvsMotionDetector {
   void set_threshold(float value) { this->threshold_ = value; }
   void set_enter_hits(uint8_t value) { this->enter_hits_ = value; }
   void set_exit_hits(uint8_t value) { this->exit_hits_ = value; }
-  void set_hold_time_ms(uint32_t value) { this->hold_time_ms_ = value; }
+
+  // ESPectre's published motion sensor uses delayed_off: 120s. Enforce a
+  // minimum 120s here as well so MVS cannot accidentally shorten that contract.
+  void set_hold_time_ms(uint32_t value) { this->hold_time_ms_ = std::max<uint32_t>(120000U, value); }
 
   MvsMotionResult update(const CsiPacket &packet, uint32_t now_ms) {
     const float turbulence = this->calculate_turbulence_(packet);
@@ -73,15 +76,16 @@ class MvsMotionDetector {
     if (inference_motion) {
       if (this->enter_hits_count_ < this->enter_hits_) ++this->enter_hits_count_;
       this->exit_hits_count_ = 0;
+
+      // Match the ESPectre delayed_off semantics: every new positive ML
+      // inference refreshes the 120s hold. Therefore the published state can
+      // never turn OFF while positive detections continue.
+      if (this->active_) this->hold_until_ms_ = now_ms + this->hold_time_ms_;
     } else {
       if (this->exit_hits_count_ < this->exit_hits_) ++this->exit_hits_count_;
       this->enter_hits_count_ = 0;
     }
 
-    // Once MVS enters motion, it MUST remain ON for the complete configured
-    // hold interval. The hold timer starts at the actual ON transition and is
-    // never shortened by a low ML score. After the interval, the detector can
-    // leave only after the configured number of consecutive negative hits.
     if (!this->active_ && this->enter_hits_count_ >= this->enter_hits_) {
       this->active_ = true;
       this->hold_until_ms_ = now_ms + this->hold_time_ms_;
