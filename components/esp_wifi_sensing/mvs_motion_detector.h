@@ -23,20 +23,20 @@ struct MvsMotionResult {
 };
 
 // MVS-ML: local implementation of the ESPectre statistical-ML approach.
-// Decision path: spatial turbulence -> Hampel -> 100-sample window ->
-// 9 statistical features -> 9x32x16x1 MLP -> consecutive-hit state machine.
+// Decision path: fixed spatial turbulence -> Hampel -> 100-sample window ->
+// 9 statistical features -> 9x32x16x1 MLP -> 0-10 score -> motion policy.
 class MvsMotionDetector {
  public:
-  // Kept for YAML/API compatibility. The ML reference uses a fixed 100-sample
-  // feature window and evaluates every 25 packets.
+  // Kept for YAML/API compatibility. ML uses a fixed 100-sample feature
+  // window and evaluates every 25 packets, matching ESPectre.
   void set_window_samples(uint16_t) {}
   void set_threshold_multiplier(float) {}
   void set_threshold(float value) { this->threshold_ = value; }
   void set_enter_hits(uint8_t value) { this->enter_hits_ = value; }
   void set_exit_hits(uint8_t value) { this->exit_hits_ = value; }
 
-  // ESPectre's published motion sensor uses delayed_off: 120s. Enforce a
-  // minimum 120s here as well so MVS cannot accidentally shorten that contract.
+  // Required project policy: once motion starts, it cannot turn OFF before
+  // 120s. Positive ML evaluations during the hold refresh the timer.
   void set_hold_time_ms(uint32_t value) { this->hold_time_ms_ = std::max<uint32_t>(120000U, value); }
 
   MvsMotionResult update(const CsiPacket &packet, uint32_t now_ms) {
@@ -71,15 +71,12 @@ class MvsMotionDetector {
     this->coherence_ = features[6];
     this->baseline_ = features[0];
 
-    const bool inference_motion = score >= this->threshold_;
+    // ESPectre uses a strict > comparison for the 0-10 ML score.
+    const bool inference_motion = score > this->threshold_;
 
     if (inference_motion) {
       if (this->enter_hits_count_ < this->enter_hits_) ++this->enter_hits_count_;
       this->exit_hits_count_ = 0;
-
-      // Match the ESPectre delayed_off semantics: every new positive ML
-      // inference refreshes the 120s hold. Therefore the published state can
-      // never turn OFF while positive detections continue.
       if (this->active_) this->hold_until_ms_ = now_ms + this->hold_time_ms_;
     } else {
       if (this->exit_hits_count_ < this->exit_hits_) ++this->exit_hits_count_;
@@ -108,6 +105,8 @@ class MvsMotionDetector {
   static constexpr uint8_t kHampelWindow = 7;
   static constexpr float kHampelThreshold = 5.0f;
   static constexpr float kHampelScale = 1.4826f;
+  // ESPectre v2.8 ML uses temperature scaling before sigmoid.
+  static constexpr float kMlTemperature = 5.0f;
 
   static constexpr uint8_t kSubcarriers[12] = {12, 14, 16, 18, 20, 24, 28, 36, 40, 44, 48, 52};
 
@@ -119,9 +118,9 @@ class MvsMotionDetector {
     float sum = 0.0f;
     for (uint8_t i = 0; i < 12; ++i) {
       const uint16_t sc = kSubcarriers[i];
-      const float q = static_cast<float>(packet.raw_bytes[2 * sc]);
-      const float in_phase = static_cast<float>(packet.raw_bytes[2 * sc + 1]);
-      const float amp = std::sqrt(q * q + in_phase * in_phase);
+      const float in_phase = static_cast<float>(packet.raw_bytes[2 * sc]);
+      const float quadrature = static_cast<float>(packet.raw_bytes[2 * sc + 1]);
+      const float amp = std::sqrt(in_phase * in_phase + quadrature * quadrature);
       amplitudes[i] = amp;
       sum += amp;
     }
@@ -245,7 +244,12 @@ class MvsMotionDetector {
     }
     float z = mvs_ml::B3[0];
     for (uint8_t i = 0; i < 16; ++i) z += h2[i] * mvs_ml::W3[i];
-    z = std::fmax(-40.0f, std::fmin(40.0f, z));
+
+    // This is part of ESPectre's ML scoring path, not merely presentation:
+    // divide the raw logit by T=5 before sigmoid, leaving threshold 5.0 at the
+    // same 0.5 decision boundary while avoiding an almost binary score.
+    z /= kMlTemperature;
+    z = std::fmax(-20.0f, std::fmin(20.0f, z));
     return 1.0f / (1.0f + std::exp(-z));
   }
 
