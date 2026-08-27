@@ -4,7 +4,6 @@
 
 #include "esp_err.h"
 #include "esp_netif.h"
-#include "driver/gpio.h"
 
 namespace esphome {
 /**
@@ -125,7 +124,6 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing";
-constexpr gpio_num_t MOTION_LED_GPIO = GPIO_NUM_15;
 
 
 void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
@@ -138,9 +136,6 @@ void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
   this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
-  gpio_reset_pin(MOTION_LED_GPIO);
-  gpio_set_direction(MOTION_LED_GPIO, GPIO_MODE_OUTPUT);
-  gpio_set_level(MOTION_LED_GPIO, 0);
 }
 
 
@@ -172,7 +167,6 @@ void ESPWiFiSensing::loop() {
       return;
     }
     this->new_csi_sample_ = false;
-    gpio_set_level(MOTION_LED_GPIO, this->motion_state_ ? 1 : 0);
     if (this->motion_binary_sensor_ != nullptr) {
       this->motion_binary_sensor_->publish_state(this->motion_state_);
     }
@@ -221,8 +215,6 @@ void ESPWiFiSensing::loop() {
            static_cast<unsigned>(average_variation), static_cast<unsigned>(this->variation_max_),
            static_cast<unsigned>(this->variation_window_count_));
 
-  if (this->metric_sensor_ != nullptr) this->metric_sensor_->publish_state(this->latest_csi_metric_);
-  if (this->variation_avg_sensor_ != nullptr) this->variation_avg_sensor_->publish_state(average_variation);
 
   if (this->warmup_active_(now)) {
     this->consecutive_above_threshold_ = 0;
@@ -249,7 +241,6 @@ void ESPWiFiSensing::loop() {
   }
 
   this->motion_state_ = this->apply_motion_hold_(motion_detected, now);
-  gpio_set_level(MOTION_LED_GPIO, this->motion_state_ ? 1 : 0);
   if (this->motion_binary_sensor_ != nullptr) this->motion_binary_sensor_->publish_state(this->motion_state_);
 }
 
@@ -567,11 +558,6 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
   ESP_LOGCONFIG(TAG, "  Threshold: %.2f", this->motion_threshold_);
   ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
-  LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
-  LOG_SENSOR("  ", "CSI Variation Avg", this->variation_avg_sensor_);
-  LOG_SENSOR("  ", "Baseline Mean", this->baseline_mean_sensor_);
-  LOG_SENSOR("  ", "Baseline StdDev", this->baseline_stddev_sensor_);
-  LOG_SENSOR("  ", "Adaptive Threshold", this->adaptive_threshold_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }

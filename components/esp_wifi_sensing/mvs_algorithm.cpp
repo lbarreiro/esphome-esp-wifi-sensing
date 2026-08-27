@@ -10,35 +10,42 @@ constexpr float NOISE_FLOOR = 0.02f;
 constexpr float BASELINE_ALPHA_QUIET = 0.006f;
 constexpr float BASELINE_ALPHA_CHANNEL = 0.0015f;
 constexpr uint8_t ENTER_OBSERVATIONS = 3;
-constexpr uint8_t EXIT_OBSERVATIONS = 8;
-}
+constexpr uint8_t EXIT_OBSERVATIONS = 3;
+}  // namespace
 
 MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
   float frame[kBins]{};
   if (!this->make_frame_(packet, frame)) {
-    return MvsResult{false, this->motion_state_, 0.0f};
+    return MvsResult{this->baseline_initialized_, this->motion_state_, this->last_score_, false, this->total_observations_};
   }
+
+  float observation[kBins]{};
+  if (!this->make_observation_(frame, now_ms, observation)) {
+    return MvsResult{this->baseline_initialized_, this->motion_state_, this->last_score_, false, this->total_observations_};
+  }
+  this->total_observations_++;
 
   if (!this->baseline_initialized_) {
-    this->update_baseline_(frame, true);
-    return MvsResult{false, false, 0.0f};
+    this->update_baseline_(observation, false);
+    this->last_score_ = 0.0f;
+    return MvsResult{false, false, this->last_score_, true, this->total_observations_};
   }
 
-  const FrameFeatures features = this->compute_features_(frame);
+  const FrameFeatures features = this->compute_features_(observation);
   this->push_history_(features);
-  const float score = this->score_window_();
-  const bool motion = this->update_fsm_(score, now_ms);
+  this->last_score_ = this->score_window_();
+  const bool motion = this->update_fsm_(this->last_score_, now_ms);
 
-  const bool quiet = score < (this->threshold_ * 0.45f);
-  const bool common_channel_shift = features.common_ratio > 0.78f && score < (this->threshold_ * 0.85f);
+  const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
+  const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
   if (!motion && (quiet || common_channel_shift)) {
-    this->update_baseline_(frame, common_channel_shift);
+    this->update_baseline_(observation, common_channel_shift);
   }
 
-  return MvsResult{this->history_count_ >= kWindowSamples / 2, motion, score};
+  return MvsResult{this->history_count_ >= kWindowSamples / 2, motion, this->last_score_, true, this->total_observations_};
 }
 
-bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) {
+bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) const {
   if (!packet.layout_supported || packet.count < kBins) {
     return false;
   }
@@ -51,59 +58,79 @@ bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) {
     counts[bin]++;
   }
 
-  float mean = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
     if (counts[i] == 0) {
       return false;
     }
     frame[i] = sums[i] / counts[i];
-    mean += frame[i];
-  }
-  mean /= kBins;
-
-  // Per-frame common gain removal. This makes global AGC/RF changes much less important.
-  for (size_t i = 0; i < kBins; i++) {
-    frame[i] -= mean;
   }
   return true;
 }
 
-MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) {
-  float residual[kBins]{};
+bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float *observation) {
+  if (!this->timing_started_) {
+    this->timing_started_ = true;
+    this->last_observation_ms_ = now_ms;
+  }
+
+  for (size_t i = 0; i < kBins; i++) {
+    this->accumulator_[i] += frame[i];
+  }
+  if (this->accumulator_count_ < UINT16_MAX) {
+    this->accumulator_count_++;
+  }
+
+  if (now_ms - this->last_observation_ms_ < kUpdateIntervalMs) {
+    return false;
+  }
+
+  const float inv = this->accumulator_count_ > 0 ? 1.0f / this->accumulator_count_ : 1.0f;
+  for (size_t i = 0; i < kBins; i++) {
+    observation[i] = this->accumulator_[i] * inv;
+    this->accumulator_[i] = 0.0f;
+  }
+  this->accumulator_count_ = 0;
+  this->last_observation_ms_ = now_ms;
+  return true;
+}
+
+MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) const {
+  float delta[kBins]{};
   float common = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
-    residual[i] = frame[i] - baseline_[i];
-    common += residual[i];
+    delta[i] = frame[i] - baseline_[i];
+    common += delta[i];
   }
   common /= kBins;
 
-  float residual_energy = 0.0f;
+  float total_energy = 0.0f;
+  float spatial_energy = 0.0f;
   float residual_abs = 0.0f;
-  float non_common_energy = 0.0f;
   float roughness = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
-    const float normalized = residual[i] / std::max(noise_[i], NOISE_FLOOR);
-    const float non_common = (residual[i] - common) / std::max(noise_[i], NOISE_FLOOR);
-    residual_energy += normalized * normalized;
-    residual_abs += std::fabs(non_common);
-    non_common_energy += non_common * non_common;
+    const float norm = std::max(noise_[i], NOISE_FLOOR);
+    const float normalized_delta = delta[i] / norm;
+    const float residual = (delta[i] - common) / norm;
+    total_energy += normalized_delta * normalized_delta;
+    spatial_energy += residual * residual;
+    residual_abs += std::fabs(residual);
     if (i > 0) {
-      const float edge = ((residual[i] - residual[i - 1]) / std::max((noise_[i] + noise_[i - 1]) * 0.5f, NOISE_FLOOR));
-      roughness += std::fabs(edge);
+      const float prev_residual = delta[i - 1] - common;
+      const float edge_norm = std::max((noise_[i] + noise_[i - 1]) * 0.5f, NOISE_FLOOR);
+      roughness += std::fabs(((delta[i] - common) - prev_residual) / edge_norm);
     }
   }
 
-  const float total_energy = residual_energy + EPS;
   const float common_energy = (common * common * kBins) / (NOISE_FLOOR * NOISE_FLOOR);
   return FrameFeatures{
-      std::sqrt(non_common_energy / kBins),
+      std::sqrt(spatial_energy / kBins),
       residual_abs / kBins,
       roughness / (kBins - 1),
-      common_energy / (common_energy + total_energy),
+      common_energy / (common_energy + spatial_energy + EPS),
   };
 }
 
-void MvsAlgorithm::update_baseline_(const float *frame, bool allow_fast) {
+void MvsAlgorithm::update_baseline_(const float *frame, bool channel_drift) {
   if (baseline_samples_ == 0) {
     for (size_t i = 0; i < kBins; i++) {
       baseline_[i] = frame[i];
@@ -118,13 +145,14 @@ void MvsAlgorithm::update_baseline_(const float *frame, bool allow_fast) {
       const float delta = frame[i] - baseline_[i];
       baseline_[i] += delta / static_cast<float>(baseline_samples_ + 1);
       noise_[i] += (std::fabs(delta) - noise_[i]) / static_cast<float>(baseline_samples_ + 1);
+      noise_[i] = std::max(noise_[i], NOISE_FLOOR);
     }
     baseline_samples_++;
     baseline_initialized_ = baseline_samples_ >= BASELINE_BOOT_SAMPLES;
     return;
   }
 
-  const float alpha = allow_fast ? BASELINE_ALPHA_CHANNEL : BASELINE_ALPHA_QUIET;
+  const float alpha = channel_drift ? BASELINE_ALPHA_CHANNEL : BASELINE_ALPHA_QUIET;
   for (size_t i = 0; i < kBins; i++) {
     const float delta = frame[i] - baseline_[i];
     baseline_[i] += alpha * delta;
@@ -160,7 +188,7 @@ float MvsAlgorithm::score_window_() const {
   const float inv = 1.0f / history_count_;
   const float motion_pattern = (1.8f * residual + 2.4f * mad + 1.5f * rough) * inv;
   const float temporal_texture = history_count_ > 1 ? temporal / (history_count_ - 1) : 0.0f;
-  const float common_factor = 1.0f - std::min(0.70f, (rf_penalty * inv) * 0.70f);
+  const float common_factor = 1.0f - std::min(0.75f, (rf_penalty * inv) * 0.75f);
   const float active_factor = std::min(1.0f, static_cast<float>(active_frames) / 4.0f);
   return std::max(0.0f, (motion_pattern + 1.2f * temporal_texture) * common_factor * active_factor);
 }
