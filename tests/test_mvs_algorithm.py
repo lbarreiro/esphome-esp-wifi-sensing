@@ -139,3 +139,10 @@ def test_algorithm_mvs_nao_usa_average_variation_para_decidir_motion():
     assert 'average_variation' not in mvs_block
     callback=source[source.index('if (self->selected_algorithm_ == CsiAlgorithm::MVS)'):source.index('} else if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE)')]
     assert 'mvs_algorithm_.process' in callback
+
+def test_sem_sensores_diagnostico_e_sem_gpio15_no_cpp():
+    import pathlib
+    assert not pathlib.Path('components/esp_wifi_sensing/sensor.py').exists()
+    combined='\n'.join(p.read_text(encoding='utf-8') for p in pathlib.Path('components/esp_wifi_sensing').glob('*.cpp'))
+    assert 'GPIO_NUM_15' not in combined
+    assert 'gpio_set_level' not in combined

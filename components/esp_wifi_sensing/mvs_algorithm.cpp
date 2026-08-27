@@ -68,6 +68,8 @@ bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) cons
 }
 
 bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float *observation) {
+  // CSI packets may arrive much faster than 1 Hz. Accumulate all frames, but only
+  // advance the MVS temporal window when real elapsed time reaches kUpdateIntervalMs.
   if (!this->timing_started_) {
     this->timing_started_ = true;
     this->last_observation_ms_ = now_ms;
@@ -95,6 +97,8 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
 }
 
 MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) const {
+  // Keep the original per-bin amplitude profile for common-mode estimation; only
+  // remove the common component after it has been measured.
   float delta[kBins]{};
   float common = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
