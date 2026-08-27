@@ -11,6 +11,7 @@ constexpr float BASELINE_ALPHA_QUIET = 0.006f;
 constexpr float BASELINE_ALPHA_CHANNEL = 0.0015f;
 constexpr uint8_t ENTER_OBSERVATIONS = 3;
 constexpr uint8_t EXIT_OBSERVATIONS = 3;
+constexpr size_t EXIT_RECENT_SAMPLES = 4;
 }  // namespace
 
 MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
@@ -200,15 +201,41 @@ float MvsAlgorithm::score_window_() const {
 bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float enter = threshold_;
   const float exit = threshold_ * 0.62f;
+
   if (score > enter) {
     enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, enter_count_ + 1);
     exit_count_ = 0;
-  } else if (score < exit) {
-    exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, exit_count_ + 1);
-    enter_count_ = 0;
   } else {
     enter_count_ = 0;
-    exit_count_ = 0;
+
+    // Once the mandatory hold has expired, do not use the full 32-second window
+    // for EXIT. That window intentionally remembers recent movement and would
+    // otherwise keep the FSM ON long after the physical event has ended.
+    // EXIT is based on the most recent observations, giving the FSM a real-time
+    // recovery path while preserving hysteresis and 3-sample confirmation.
+    float recent_residual = 0.0f;
+    float recent_mad = 0.0f;
+    float recent_rough = 0.0f;
+    float recent_common = 0.0f;
+    const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
+    for (size_t n = 0; n < recent_count; n++) {
+      const size_t idx = (history_next_ + kWindowSamples - recent_count + n) % kWindowSamples;
+      const FrameFeatures &f = history_[idx];
+      recent_residual += f.residual_rms;
+      recent_mad += f.residual_mad;
+      recent_rough += f.spatial_roughness;
+      recent_common += f.common_ratio;
+    }
+    const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
+    const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
+    const float recent_score = std::max(
+        0.0f, (1.8f * recent_residual + 2.4f * recent_mad + 1.5f * recent_rough) * recent_inv * recent_common_factor);
+
+    if (recent_score < exit) {
+      exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, exit_count_ + 1);
+    } else {
+      exit_count_ = 0;
+    }
   }
 
   if (enter_count_ >= ENTER_OBSERVATIONS) {
