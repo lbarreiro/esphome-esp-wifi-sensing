@@ -254,6 +254,7 @@ void ESPWiFiSensing::loop() {
 
     this->consecutive_above_threshold_ = 0;
     this->motion_state_ = false;
+    this->reset_transient_pulse_test_();
 
     if (this->motion_binary_sensor_ != nullptr) {
       this->motion_binary_sensor_->publish_state(false);
@@ -282,8 +283,15 @@ void ESPWiFiSensing::loop() {
 
   bool motion_detected = false;
 
-  if (static_cast<float>(average_variation) > decision_threshold) {
-    this->consecutive_above_threshold_++;
+  const bool above_threshold = static_cast<float>(average_variation) > decision_threshold;
+  const uint32_t accepted_threshold_crossings = this->evaluate_transient_pulse_candidate_(
+      above_threshold,
+      average_variation,
+      decision_threshold
+  );
+
+  if (accepted_threshold_crossings > 0) {
+    this->consecutive_above_threshold_ += accepted_threshold_crossings;
     motion_detected = this->consecutive_above_threshold_ >= this->motion_debounce_;
   } else {
     this->consecutive_above_threshold_ = 0;
@@ -394,6 +402,62 @@ void ESPWiFiSensing::prune_variation_samples_(uint32_t now) {
     this->variation_max_ = max_value;
     this->variation_max_dirty_ = false;
   }
+}
+
+
+uint32_t ESPWiFiSensing::evaluate_transient_pulse_candidate_(
+    bool above_threshold, uint32_t average_variation, float decision_threshold) {
+  if (decision_threshold <= 0.0f) {
+    return above_threshold ? 1 : 0;
+  }
+
+  if (above_threshold) {
+    const float excess =
+        (static_cast<float>(average_variation) - decision_threshold) / decision_threshold;
+    this->transient_pulse_test_.active = true;
+    this->transient_pulse_test_.area +=
+        excess * (static_cast<float>(this->statistics_update_ms_) / 1000.0f);
+    this->transient_pulse_test_.elapsed_ms += this->statistics_update_ms_;
+    if (excess > this->transient_pulse_test_.peak) {
+      this->transient_pulse_test_.peak = excess;
+    }
+    return 0;
+  }
+
+  if (!this->transient_pulse_test_.active) {
+    return 0;
+  }
+
+  const float peak = this->transient_pulse_test_.peak;
+  const float area = this->transient_pulse_test_.area;
+  const float equivalent_width = peak > 0.0f ? area / peak : 0.0f;
+  const uint32_t accepted_crossings =
+      this->transient_pulse_test_.elapsed_ms / this->statistics_update_ms_;
+  const bool pass = equivalent_width >= 3.4f;
+
+  ESP_LOGI(
+      TAG,
+      "Transient pulse test: peak=%.3f area=%.3f equivalent_width=%.3f result=%s",
+      peak,
+      area,
+      equivalent_width,
+      pass ? "PASS" : "REJECT"
+  );
+
+  if (!pass) {
+    ESP_LOGI(TAG, "Transient pulse REJECTED before motion decision");
+    if (this->rejected_peak_sensor_ != nullptr) {
+      this->rejected_peak_sensor_->publish_state(equivalent_width);
+    }
+  }
+
+  this->reset_transient_pulse_test_();
+  return pass ? accepted_crossings : 0;
+}
+
+
+void ESPWiFiSensing::reset_transient_pulse_test_() {
+  this->transient_pulse_test_ = TransientPulseTestState{};
 }
 
 
@@ -637,6 +701,7 @@ void ESPWiFiSensing::dump_config() {
   LOG_SENSOR("  ", "Baseline Mean", this->baseline_mean_sensor_);
   LOG_SENSOR("  ", "Baseline StdDev", this->baseline_stddev_sensor_);
   LOG_SENSOR("  ", "Adaptive Threshold", this->adaptive_threshold_sensor_);
+  LOG_SENSOR("  ", "Rejected Peak", this->rejected_peak_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
