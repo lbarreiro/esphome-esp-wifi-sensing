@@ -35,12 +35,31 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
   const FrameFeatures features = this->compute_features_(observation);
   this->push_history_(features);
   this->last_score_ = this->score_window_();
+  const bool was_motion = this->motion_state_;
   const bool motion = this->update_fsm_(this->last_score_, now_ms);
 
-  const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
-  const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
-  if (!motion && (quiet || common_channel_shift)) {
-    this->update_baseline_(observation, common_channel_shift);
+  // A long-lived CSI offset can leave the absolute window score high even after
+  // physical movement has stopped. When the ON state exits because the recent
+  // observations are temporally quiet, accept the current RF scene as the new
+  // reference. This prevents the stale pre-motion baseline from immediately
+  // latching the detector ON again.
+  if (was_motion && !motion) {
+    for (size_t i = 0; i < kBins; i++) {
+      const float delta = std::fabs(observation[i] - this->baseline_[i]);
+      this->baseline_[i] = observation[i];
+      this->noise_[i] = std::max(NOISE_FLOOR, 0.75f * this->noise_[i] + 0.25f * delta);
+    }
+    this->history_count_ = 0;
+    this->history_next_ = 0;
+    this->enter_count_ = 0;
+    this->exit_count_ = 0;
+    this->last_score_ = 0.0f;
+  } else {
+    const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
+    const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
+    if (!motion && (quiet || common_channel_shift)) {
+      this->update_baseline_(observation, common_channel_shift);
+    }
   }
 
   return MvsResult{this->history_count_ >= kWindowSamples / 2, motion, this->last_score_, true, this->total_observations_};
@@ -69,8 +88,6 @@ bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) cons
 }
 
 bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float *observation) {
-  // CSI packets may arrive much faster than 1 Hz. Accumulate all frames, but only
-  // advance the MVS temporal window when real elapsed time reaches kUpdateIntervalMs.
   if (!this->timing_started_) {
     this->timing_started_ = true;
     this->last_observation_ms_ = now_ms;
@@ -98,8 +115,6 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
 }
 
 MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) const {
-  // Keep the original per-bin amplitude profile for common-mode estimation; only
-  // remove the common component after it has been measured.
   float delta[kBins]{};
   float common = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
@@ -187,7 +202,8 @@ float MvsAlgorithm::score_window_() const {
     }
     if (n > 0) {
       const size_t prev = (idx + kWindowSamples - 1) % kWindowSamples;
-      temporal += std::fabs(f.residual_rms - history_[prev].residual_rms) + 0.4f * std::fabs(f.spatial_roughness - history_[prev].spatial_roughness);
+      temporal += std::fabs(f.residual_rms - history_[prev].residual_rms) +
+                  0.4f * std::fabs(f.spatial_roughness - history_[prev].spatial_roughness);
     }
   }
   const float inv = 1.0f / history_count_;
@@ -201,67 +217,78 @@ float MvsAlgorithm::score_window_() const {
 bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float enter = threshold_;
   const float exit = threshold_ * 0.62f;
-  bool confirmed_enter_event = false;
+  const float temporal_exit = threshold_ * 0.35f;
 
-  if (score > enter) {
-    // A sustained score above ENTER is one motion event, not a new event every
-    // second. Only the transition into the confirmed ENTER state may start or
-    // retrigger the mandatory hold. The detector must first fall below ENTER
-    // before another 3-observation confirmation can retrigger it.
-    if (enter_count_ < ENTER_OBSERVATIONS) {
-      enter_count_++;
-      if (enter_count_ == ENTER_OBSERVATIONS) {
-        confirmed_enter_event = true;
-      }
+  // Calculate EXIT evidence independently of the 32-second absolute score.
+  // A person moving changes the CSI features from observation to observation;
+  // a person/object that has stopped may leave a large absolute residual but
+  // very little temporal change. The latter must not latch a motion sensor ON.
+  const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
+  float recent_absolute = 0.0f;
+  float recent_common = 0.0f;
+  float recent_temporal = 0.0f;
+  for (size_t n = 0; n < recent_count; n++) {
+    const size_t idx = (history_next_ + kWindowSamples - recent_count + n) % kWindowSamples;
+    const FrameFeatures &f = history_[idx];
+    recent_absolute += 1.8f * f.residual_rms + 2.4f * f.residual_mad + 1.5f * f.spatial_roughness;
+    recent_common += f.common_ratio;
+    if (n > 0) {
+      const size_t prev_idx = (history_next_ + kWindowSamples - recent_count + n - 1) % kWindowSamples;
+      const FrameFeatures &p = history_[prev_idx];
+      recent_temporal += 1.8f * std::fabs(f.residual_rms - p.residual_rms) +
+                         2.4f * std::fabs(f.residual_mad - p.residual_mad) +
+                         1.5f * std::fabs(f.spatial_roughness - p.spatial_roughness);
     }
-    exit_count_ = 0;
-  } else {
-    enter_count_ = 0;
+  }
 
-    // Once the mandatory hold has expired, do not use the full 32-second window
-    // for EXIT. That window intentionally remembers recent movement and would
-    // otherwise keep the FSM ON long after the physical event has ended.
-    // EXIT is based on the most recent observations, giving the FSM a real-time
-    // recovery path while preserving hysteresis and 3-sample confirmation.
-    float recent_residual = 0.0f;
-    float recent_mad = 0.0f;
-    float recent_rough = 0.0f;
-    float recent_common = 0.0f;
-    const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
-    for (size_t n = 0; n < recent_count; n++) {
-      const size_t idx = (history_next_ + kWindowSamples - recent_count + n) % kWindowSamples;
-      const FrameFeatures &f = history_[idx];
-      recent_residual += f.residual_rms;
-      recent_mad += f.residual_mad;
-      recent_rough += f.spatial_roughness;
-      recent_common += f.common_ratio;
-    }
-    const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
-    const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
-    const float recent_score = std::max(
-        0.0f, (1.8f * recent_residual + 2.4f * recent_mad + 1.5f * recent_rough) * recent_inv * recent_common_factor);
+  const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
+  const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
+  const float recent_score = std::max(0.0f, recent_absolute * recent_inv * recent_common_factor);
+  const float recent_activity = recent_count > 1
+                                    ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor)
+                                    : recent_score;
 
-    if (recent_score < exit) {
-      exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, exit_count_ + 1);
+  if (!this->motion_state_) {
+    // ENTER still uses the original MVS score/window. Detection sensitivity is
+    // intentionally unchanged by this fix.
+    if (score > enter) {
+      this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
     } else {
-      exit_count_ = 0;
+      this->enter_count_ = 0;
     }
+    this->exit_count_ = 0;
+
+    if (this->enter_count_ >= ENTER_OBSERVATIONS) {
+      this->motion_state_ = true;
+      this->last_motion_time_ = now_ms;
+      this->enter_count_ = 0;
+    }
+    return this->motion_state_;
   }
 
-  if (confirmed_enter_event) {
-    motion_state_ = true;
-    last_motion_time_ = now_ms;
+  // While ON, the mandatory 120 s hold is never shortened. Crucially, a high
+  // historical score no longer blocks EXIT evaluation. After the hold, three
+  // consecutive recent observations must show either a genuinely low residual
+  // or low temporal activity. This makes EXIT describe current movement rather
+  // than a stale 32-second RF scene.
+  if (now_ms - this->last_motion_time_ < this->hold_time_ms_) {
+    this->exit_count_ = 0;
+    return true;
   }
 
-  if (motion_state_) {
-    if (now_ms - last_motion_time_ < hold_time_ms_) {
-      return true;
-    }
-    if (exit_count_ >= EXIT_OBSERVATIONS) {
-      motion_state_ = false;
-    }
+  if (recent_score < exit || recent_activity < temporal_exit) {
+    this->exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, this->exit_count_ + 1);
+  } else {
+    this->exit_count_ = 0;
   }
-  return motion_state_;
+
+  if (this->exit_count_ >= EXIT_OBSERVATIONS) {
+    this->motion_state_ = false;
+    this->enter_count_ = 0;
+    this->exit_count_ = 0;
+  }
+
+  return this->motion_state_;
 }
 
 }  // namespace esp_wifi_sensing
