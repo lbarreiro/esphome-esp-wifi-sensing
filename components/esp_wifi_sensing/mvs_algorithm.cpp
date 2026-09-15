@@ -201,9 +201,19 @@ float MvsAlgorithm::score_window_() const {
 bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float enter = threshold_;
   const float exit = threshold_ * 0.62f;
+  bool confirmed_enter_event = false;
 
   if (score > enter) {
-    enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, enter_count_ + 1);
+    // A sustained score above ENTER is one motion event, not a new event every
+    // second. Only the transition into the confirmed ENTER state may start or
+    // retrigger the mandatory hold. The detector must first fall below ENTER
+    // before another 3-observation confirmation can retrigger it.
+    if (enter_count_ < ENTER_OBSERVATIONS) {
+      enter_count_++;
+      if (enter_count_ == ENTER_OBSERVATIONS) {
+        confirmed_enter_event = true;
+      }
+    }
     exit_count_ = 0;
   } else {
     enter_count_ = 0;
@@ -238,7 +248,7 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
     }
   }
 
-  if (enter_count_ >= ENTER_OBSERVATIONS) {
+  if (confirmed_enter_event) {
     motion_state_ = true;
     last_motion_time_ = now_ms;
   }
