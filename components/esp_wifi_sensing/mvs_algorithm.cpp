@@ -35,41 +35,23 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
   const FrameFeatures features = this->compute_features_(observation);
   this->push_history_(features);
   this->last_score_ = this->score_window_();
-  const bool was_motion = this->motion_state_;
   const bool motion = this->update_fsm_(this->last_score_, now_ms);
 
-  // A long-lived CSI offset can leave the absolute window score high even after
-  // physical movement has stopped. When the ON state exits because the recent
-  // observations are temporally quiet, accept the current RF scene as the new
-  // reference. This prevents the stale pre-motion baseline from immediately
-  // latching the detector ON again.
-  if (was_motion && !motion) {
-    for (size_t i = 0; i < kBins; i++) {
-      const float delta = std::fabs(observation[i] - this->baseline_[i]);
-      this->baseline_[i] = observation[i];
-      this->noise_[i] = std::max(NOISE_FLOOR, 0.75f * this->noise_[i] + 0.25f * delta);
-    }
-    this->history_count_ = 0;
-    this->history_next_ = 0;
-    this->enter_count_ = 0;
-    this->exit_count_ = 0;
-    this->last_score_ = 0.0f;
-  } else {
-    const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
-    const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
-    if (!motion && (quiet || common_channel_shift)) {
-      this->update_baseline_(observation, common_channel_shift);
-    }
+  // Never hard-reset the baseline or the 32 s history on an OFF transition.
+  // Doing so created a new warm-up-like period after every event and made the
+  // detector late or unable to reactivate. Let the normal quiet/drift learner
+  // adapt gradually while OFF instead.
+  const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
+  const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
+  if (!motion && (quiet || common_channel_shift)) {
+    this->update_baseline_(observation, common_channel_shift);
   }
 
   return MvsResult{this->history_count_ >= kWindowSamples / 2, motion, this->last_score_, true, this->total_observations_};
 }
 
 bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) const {
-  if (!packet.layout_supported || packet.count < kBins) {
-    return false;
-  }
-
+  if (!packet.layout_supported || packet.count < kBins) return false;
   float sums[kBins]{};
   uint16_t counts[kBins]{};
   for (size_t i = 0; i < packet.count; i++) {
@@ -77,11 +59,8 @@ bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) cons
     sums[bin] += std::log1pf(packet.subcarriers[i].amplitude);
     counts[bin]++;
   }
-
   for (size_t i = 0; i < kBins; i++) {
-    if (counts[i] == 0) {
-      return false;
-    }
+    if (counts[i] == 0) return false;
     frame[i] = sums[i] / counts[i];
   }
   return true;
@@ -92,18 +71,9 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
     this->timing_started_ = true;
     this->last_observation_ms_ = now_ms;
   }
-
-  for (size_t i = 0; i < kBins; i++) {
-    this->accumulator_[i] += frame[i];
-  }
-  if (this->accumulator_count_ < UINT16_MAX) {
-    this->accumulator_count_++;
-  }
-
-  if (now_ms - this->last_observation_ms_ < kUpdateIntervalMs) {
-    return false;
-  }
-
+  for (size_t i = 0; i < kBins; i++) this->accumulator_[i] += frame[i];
+  if (this->accumulator_count_ < UINT16_MAX) this->accumulator_count_++;
+  if (now_ms - this->last_observation_ms_ < kUpdateIntervalMs) return false;
   const float inv = this->accumulator_count_ > 0 ? 1.0f / this->accumulator_count_ : 1.0f;
   for (size_t i = 0; i < kBins; i++) {
     observation[i] = this->accumulator_[i] * inv;
@@ -117,21 +87,12 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
 MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) const {
   float delta[kBins]{};
   float common = 0.0f;
-  for (size_t i = 0; i < kBins; i++) {
-    delta[i] = frame[i] - baseline_[i];
-    common += delta[i];
-  }
+  for (size_t i = 0; i < kBins; i++) { delta[i] = frame[i] - baseline_[i]; common += delta[i]; }
   common /= kBins;
-
-  float total_energy = 0.0f;
-  float spatial_energy = 0.0f;
-  float residual_abs = 0.0f;
-  float roughness = 0.0f;
+  float spatial_energy = 0.0f, residual_abs = 0.0f, roughness = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
     const float norm = std::max(noise_[i], NOISE_FLOOR);
-    const float normalized_delta = delta[i] / norm;
     const float residual = (delta[i] - common) / norm;
-    total_energy += normalized_delta * normalized_delta;
     spatial_energy += residual * residual;
     residual_abs += std::fabs(residual);
     if (i > 0) {
@@ -140,26 +101,17 @@ MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) 
       roughness += std::fabs(((delta[i] - common) - prev_residual) / edge_norm);
     }
   }
-
   const float common_energy = (common * common * kBins) / (NOISE_FLOOR * NOISE_FLOOR);
-  return FrameFeatures{
-      std::sqrt(spatial_energy / kBins),
-      residual_abs / kBins,
-      roughness / (kBins - 1),
-      common_energy / (common_energy + spatial_energy + EPS),
-  };
+  return FrameFeatures{std::sqrt(spatial_energy / kBins), residual_abs / kBins,
+                       roughness / (kBins - 1), common_energy / (common_energy + spatial_energy + EPS)};
 }
 
 void MvsAlgorithm::update_baseline_(const float *frame, bool channel_drift) {
   if (baseline_samples_ == 0) {
-    for (size_t i = 0; i < kBins; i++) {
-      baseline_[i] = frame[i];
-      noise_[i] = 0.08f;
-    }
+    for (size_t i = 0; i < kBins; i++) { baseline_[i] = frame[i]; noise_[i] = 0.08f; }
     baseline_samples_ = 1;
     return;
   }
-
   if (!baseline_initialized_) {
     for (size_t i = 0; i < kBins; i++) {
       const float delta = frame[i] - baseline_[i];
@@ -171,7 +123,6 @@ void MvsAlgorithm::update_baseline_(const float *frame, bool channel_drift) {
     baseline_initialized_ = baseline_samples_ >= BASELINE_BOOT_SAMPLES;
     return;
   }
-
   const float alpha = channel_drift ? BASELINE_ALPHA_CHANNEL : BASELINE_ALPHA_QUIET;
   for (size_t i = 0; i < kBins; i++) {
     const float delta = frame[i] - baseline_[i];
@@ -193,17 +144,11 @@ float MvsAlgorithm::score_window_() const {
   for (size_t n = 0; n < history_count_; n++) {
     const size_t idx = (history_next_ + kWindowSamples - history_count_ + n) % kWindowSamples;
     const FrameFeatures &f = history_[idx];
-    residual += f.residual_rms;
-    mad += f.residual_mad;
-    rough += f.spatial_roughness;
-    rf_penalty += f.common_ratio;
-    if ((f.residual_rms + f.residual_mad + f.spatial_roughness) > 4.0f) {
-      active_frames++;
-    }
+    residual += f.residual_rms; mad += f.residual_mad; rough += f.spatial_roughness; rf_penalty += f.common_ratio;
+    if ((f.residual_rms + f.residual_mad + f.spatial_roughness) > 4.0f) active_frames++;
     if (n > 0) {
       const size_t prev = (idx + kWindowSamples - 1) % kWindowSamples;
-      temporal += std::fabs(f.residual_rms - history_[prev].residual_rms) +
-                  0.4f * std::fabs(f.spatial_roughness - history_[prev].spatial_roughness);
+      temporal += std::fabs(f.residual_rms - history_[prev].residual_rms) + 0.4f * std::fabs(f.spatial_roughness - history_[prev].spatial_roughness);
     }
   }
   const float inv = 1.0f / history_count_;
@@ -219,14 +164,8 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float exit = threshold_ * 0.62f;
   const float temporal_exit = threshold_ * 0.35f;
 
-  // Calculate EXIT evidence independently of the 32-second absolute score.
-  // A person moving changes the CSI features from observation to observation;
-  // a person/object that has stopped may leave a large absolute residual but
-  // very little temporal change. The latter must not latch a motion sensor ON.
   const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
-  float recent_absolute = 0.0f;
-  float recent_common = 0.0f;
-  float recent_temporal = 0.0f;
+  float recent_absolute = 0.0f, recent_common = 0.0f, recent_temporal = 0.0f;
   for (size_t n = 0; n < recent_count; n++) {
     const size_t idx = (history_next_ + kWindowSamples - recent_count + n) % kWindowSamples;
     const FrameFeatures &f = history_[idx];
@@ -240,24 +179,15 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
                          1.5f * std::fabs(f.spatial_roughness - p.spatial_roughness);
     }
   }
-
   const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
   const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
   const float recent_score = std::max(0.0f, recent_absolute * recent_inv * recent_common_factor);
-  const float recent_activity = recent_count > 1
-                                    ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor)
-                                    : recent_score;
+  const float recent_activity = recent_count > 1 ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor) : recent_score;
 
   if (!this->motion_state_) {
-    // ENTER still uses the original MVS score/window. Detection sensitivity is
-    // intentionally unchanged by this fix.
-    if (score > enter) {
-      this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
-    } else {
-      this->enter_count_ = 0;
-    }
+    if (score > enter) this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
+    else this->enter_count_ = 0;
     this->exit_count_ = 0;
-
     if (this->enter_count_ >= ENTER_OBSERVATIONS) {
       this->motion_state_ = true;
       this->last_motion_time_ = now_ms;
@@ -266,28 +196,21 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
     return this->motion_state_;
   }
 
-  // While ON, the mandatory 120 s hold is never shortened. Crucially, a high
-  // historical score no longer blocks EXIT evaluation. After the hold, three
-  // consecutive recent observations must show either a genuinely low residual
-  // or low temporal activity. This makes EXIT describe current movement rather
-  // than a stale 32-second RF scene.
   if (now_ms - this->last_motion_time_ < this->hold_time_ms_) {
     this->exit_count_ = 0;
     return true;
   }
 
-  if (recent_score < exit || recent_activity < temporal_exit) {
+  if (recent_score < exit || recent_activity < temporal_exit)
     this->exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, this->exit_count_ + 1);
-  } else {
+  else
     this->exit_count_ = 0;
-  }
 
   if (this->exit_count_ >= EXIT_OBSERVATIONS) {
     this->motion_state_ = false;
     this->enter_count_ = 0;
     this->exit_count_ = 0;
   }
-
   return this->motion_state_;
 }
 
