@@ -37,10 +37,6 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
   this->last_score_ = this->score_window_();
   const bool motion = this->update_fsm_(this->last_score_, now_ms);
 
-  // Never hard-reset the baseline or the 32 s history on an OFF transition.
-  // Doing so created a new warm-up-like period after every event and made the
-  // detector late or unable to reactivate. Let the normal quiet/drift learner
-  // adapt gradually while OFF instead.
   const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
   const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
   if (!motion && (quiet || common_channel_shift)) {
@@ -162,8 +158,15 @@ float MvsAlgorithm::score_window_() const {
 bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float enter = threshold_;
   const float exit = threshold_ * 0.62f;
+  const float temporal_enter = threshold_ * 0.25f;
   const float temporal_exit = threshold_ * 0.35f;
 
+  // Espressif's motion detector is fundamentally jitter/event based: a threshold
+  // crossing is confirmed several times inside a filter window. Mirror that
+  // principle here. The long-window score says that the RF scene differs from
+  // baseline; recent_activity proves that it is changing NOW. Requiring both on
+  // ENTER prevents a stale high baseline residual from producing OFF -> ON again
+  // three seconds after every 120 s hold.
   const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
   float recent_absolute = 0.0f, recent_common = 0.0f, recent_temporal = 0.0f;
   for (size_t n = 0; n < recent_count; n++) {
@@ -182,11 +185,15 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
   const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
   const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
   const float recent_score = std::max(0.0f, recent_absolute * recent_inv * recent_common_factor);
-  const float recent_activity = recent_count > 1 ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor) : recent_score;
+  const float recent_activity = recent_count > 1 ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor) : 0.0f;
 
   if (!this->motion_state_) {
-    if (score > enter) this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
-    else this->enter_count_ = 0;
+    const bool current_motion = score > enter && recent_count >= EXIT_RECENT_SAMPLES && recent_activity > temporal_enter;
+    if (current_motion)
+      this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
+    else
+      this->enter_count_ = 0;
+
     this->exit_count_ = 0;
     if (this->enter_count_ >= ENTER_OBSERVATIONS) {
       this->motion_state_ = true;
@@ -196,6 +203,8 @@ bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
     return this->motion_state_;
   }
 
+  // Keep the user's mandatory 120 s minimum ON time. After that, EXIT uses the
+  // recent signal rather than the stale 32 s score.
   if (now_ms - this->last_motion_time_ < this->hold_time_ms_) {
     this->exit_count_ = 0;
     return true;
