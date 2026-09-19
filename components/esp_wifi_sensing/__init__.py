@@ -30,6 +30,7 @@ CsiAlgorithm = esp_wifi_sensing_ns.enum("CsiAlgorithm", is_class=True)
 ALGORITHMS = {
     "absolute_sum": CsiAlgorithm.ABSOLUTE_SUM,
     "variance": CsiAlgorithm.VARIANCE,
+    "mvs": CsiAlgorithm.MVS,
 }
 
 ESP_WIFI_SENSING_COMPONENT_SCHEMA = {
@@ -53,7 +54,7 @@ CONFIG_SCHEMA = cv.Schema(
             ALGORITHMS, lower=True
         ),
         cv.Optional(CONF_GAIN_COMPENSATION, default=False): cv.boolean,
-        cv.Optional(CONF_THRESHOLD, default=6000): cv.uint32_t,
+        cv.Optional(CONF_THRESHOLD, default=9.5): cv.positive_float,
         cv.Optional(CONF_DEBOUNCE, default=2): cv.positive_int,
         cv.Optional(CONF_ADAPTIVE_THRESHOLD, default=True): cv.boolean,
         cv.Optional(CONF_SIGMA_MULTIPLIER, default=4.0): cv.positive_float,
@@ -61,7 +62,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BASELINE_FALL_TIME, default="30min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_LEARNING_DELAY, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_WARMUP_TIME, default="0s"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_MOTION_HOLD_TIME, default="0s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_MOTION_HOLD_TIME, default="120s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_STATISTICS_WINDOW, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_STATISTICS_UPDATE, default="1s"): cv.positive_time_period_milliseconds,
     }

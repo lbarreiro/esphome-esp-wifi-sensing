@@ -5,7 +5,6 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
-#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 
 #include "esp_wifi.h"
@@ -17,6 +16,7 @@
 #include "absolute_sum_algorithm.h"
 #include "variance_algorithm.h"
 #include "adaptive_baseline.h"
+#include "mvs_algorithm.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -24,6 +24,7 @@ namespace esp_wifi_sensing {
 enum class CsiAlgorithm {
   ABSOLUTE_SUM,
   VARIANCE,
+  MVS,
 };
 
 class ESPWiFiSensing : public Component {
@@ -33,10 +34,8 @@ class ESPWiFiSensing : public Component {
   void dump_config() override;
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
-  void set_metric_sensor(sensor::Sensor *sensor) { this->metric_sensor_ = sensor; }
-  void set_variation_avg_sensor(sensor::Sensor *sensor) { this->variation_avg_sensor_ = sensor; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
-  void set_motion_threshold(uint32_t threshold) { this->motion_threshold_ = threshold; }
+  void set_motion_threshold(float threshold) { this->motion_threshold_ = threshold; this->mvs_algorithm_.set_threshold(threshold); }
   void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
   void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
   void set_sigma_multiplier(float multiplier) { this->adaptive_baseline_.set_sigma_multiplier(multiplier); this->sigma_multiplier_ = multiplier; }
@@ -44,12 +43,9 @@ class ESPWiFiSensing : public Component {
   void set_baseline_fall_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_fall_time(time_ms); this->baseline_fall_time_ms_ = time_ms; }
   void set_learning_delay(uint32_t delay_ms) { this->adaptive_baseline_.set_learning_delay(delay_ms); this->learning_delay_ms_ = delay_ms; }
   void set_warmup_time(uint32_t time_ms) { this->warmup_time_ms_ = time_ms; }
-  void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms; }
+  void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms < MvsAlgorithm::kMinimumHoldMs ? MvsAlgorithm::kMinimumHoldMs : time_ms; this->mvs_algorithm_.set_hold_time(this->motion_hold_time_ms_); }
   void set_statistics_window(uint32_t time_ms) { this->statistics_window_ms_ = time_ms; }
   void set_statistics_update(uint32_t time_ms) { this->statistics_update_ms_ = time_ms; }
-  void set_baseline_mean_sensor(sensor::Sensor *sensor) { this->baseline_mean_sensor_ = sensor; }
-  void set_baseline_stddev_sensor(sensor::Sensor *sensor) { this->baseline_stddev_sensor_ = sensor; }
-  void set_adaptive_threshold_sensor(sensor::Sensor *sensor) { this->adaptive_threshold_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -99,11 +95,6 @@ class ESPWiFiSensing : public Component {
   bool gain_compensation_enabled_{false};
   CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
 
-  sensor::Sensor *metric_sensor_{nullptr};
-  sensor::Sensor *variation_avg_sensor_{nullptr};
-  sensor::Sensor *baseline_mean_sensor_{nullptr};
-  sensor::Sensor *baseline_stddev_sensor_{nullptr};
-  sensor::Sensor *adaptive_threshold_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
 
   bool adaptive_threshold_enabled_{true};
@@ -114,7 +105,7 @@ class ESPWiFiSensing : public Component {
   uint32_t warmup_time_ms_{0};
   bool warmup_complete_logged_{false};
   AdaptiveBaseline adaptive_baseline_{};
-  uint32_t motion_threshold_{6000};
+  float motion_threshold_{9.5f};
   uint32_t motion_debounce_{2};
   uint32_t consecutive_above_threshold_{0};
   bool motion_state_{false};
@@ -127,6 +118,7 @@ class ESPWiFiSensing : public Component {
   CsiPipeline pipeline_{};
   AbsoluteSumAlgorithm absolute_sum_algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
+  MvsAlgorithm mvs_algorithm_{};
 };
 
 }  // namespace esp_wifi_sensing
