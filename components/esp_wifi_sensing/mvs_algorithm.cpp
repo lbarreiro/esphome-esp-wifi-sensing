@@ -4,50 +4,79 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 namespace {
-constexpr float EPS = 1.0e-3f;
-constexpr uint32_t BASELINE_BOOT_SAMPLES = 20;
-constexpr float NOISE_FLOOR = 0.02f;
-constexpr float BASELINE_ALPHA_QUIET = 0.006f;
-constexpr float BASELINE_ALPHA_CHANNEL = 0.0015f;
-constexpr uint8_t ENTER_OBSERVATIONS = 3;
-constexpr uint8_t EXIT_OBSERVATIONS = 3;
-constexpr size_t EXIT_RECENT_SAMPLES = 4;
+constexpr float EPS = 1.0e-4f;
+constexpr float QUIET_FLOOR = 0.003f;
+constexpr float QUIET_ALPHA = 0.01f;
+constexpr float QUIET_UPDATE_LIMIT = 3.0f;
+constexpr uint8_t FILTER_COUNT = 3;
+constexpr uint32_t QUIET_BOOT_SAMPLES = 20;
 }  // namespace
 
 MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
   float frame[kBins]{};
   if (!this->make_frame_(packet, frame)) {
-    return MvsResult{this->baseline_initialized_, this->motion_state_, this->last_score_, false, this->total_observations_};
+    return MvsResult{this->quiet_samples_ >= QUIET_BOOT_SAMPLES, this->motion_state_, this->last_score_, false,
+                     this->total_observations_};
   }
 
   float observation[kBins]{};
   if (!this->make_observation_(frame, now_ms, observation)) {
-    return MvsResult{this->baseline_initialized_, this->motion_state_, this->last_score_, false, this->total_observations_};
+    return MvsResult{this->quiet_samples_ >= QUIET_BOOT_SAMPLES, this->motion_state_, this->last_score_, false,
+                     this->total_observations_};
   }
   this->total_observations_++;
 
-  if (!this->baseline_initialized_) {
-    this->update_baseline_(observation, false);
-    this->last_score_ = 0.0f;
-    return MvsResult{false, false, this->last_score_, true, this->total_observations_};
+  const float jitter = this->temporal_jitter_(observation);
+  if (!this->have_previous_profile_) {
+    return MvsResult{false, false, 0.0f, true, this->total_observations_};
   }
 
-  const FrameFeatures features = this->compute_features_(observation);
-  this->push_history_(features);
-  this->last_score_ = this->score_window_();
-  const bool motion = this->update_fsm_(this->last_score_, now_ms);
+  // Espressif's motion path is based on CSI waveform jitter, not distance from
+  // a long-lived room baseline. Normalise current temporal jitter by the quiet
+  // jitter floor so the existing threshold remains a dimensionless sensitivity.
+  this->last_score_ = jitter / std::max(this->quiet_jitter_, QUIET_FLOOR);
 
-  const bool quiet = this->last_score_ < (this->threshold_ * 0.45f);
-  const bool common_channel_shift = features.common_ratio > 0.78f && this->last_score_ < (this->threshold_ * 0.85f);
-  if (!motion && (quiet || common_channel_shift)) {
-    this->update_baseline_(observation, common_channel_shift);
+  if (this->quiet_samples_ < QUIET_BOOT_SAMPLES) {
+    this->quiet_jitter_ += (jitter - this->quiet_jitter_) / static_cast<float>(this->quiet_samples_ + 1);
+    this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
+    this->quiet_samples_++;
+    this->clear_filter_();
+    return MvsResult{this->quiet_samples_ >= QUIET_BOOT_SAMPLES, false, this->last_score_, true,
+                     this->total_observations_};
   }
 
-  return MvsResult{this->history_count_ >= kWindowSamples / 2, motion, this->last_score_, true, this->total_observations_};
+  const bool above = this->last_score_ >= this->threshold_;
+  const bool confirmed = this->update_filter_(above);
+
+  // Equivalent in spirit to Espressif filter_window/filter_count: isolated CSI
+  // outliers cannot trigger motion; several jitter excursions inside a short
+  // window are required. Once confirmed, consume that window so a static RF
+  // offset cannot repeatedly retrigger the 120 s hold.
+  if (confirmed) {
+    this->motion_state_ = true;
+    this->last_motion_time_ = now_ms;
+    this->clear_filter_();
+  }
+
+  // Learn only genuinely quiet temporal jitter. A permanent change to the room
+  // produces a transient and then becomes quiet automatically; no room baseline
+  // reset is required and there is no stale absolute score to retrigger later.
+  if (!above && this->last_score_ < QUIET_UPDATE_LIMIT) {
+    this->quiet_jitter_ += QUIET_ALPHA * (jitter - this->quiet_jitter_);
+    this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
+  }
+
+  if (this->motion_state_ && static_cast<uint32_t>(now_ms - this->last_motion_time_) >= this->hold_time_ms_) {
+    this->motion_state_ = false;
+    this->clear_filter_();
+  }
+
+  return MvsResult{true, this->motion_state_, this->last_score_, true, this->total_observations_};
 }
 
 bool MvsAlgorithm::make_frame_(const ParsedCsiPacket &packet, float *frame) const {
   if (!packet.layout_supported || packet.count < kBins) return false;
+
   float sums[kBins]{};
   uint16_t counts[kBins]{};
   for (size_t i = 0; i < packet.count; i++) {
@@ -67,9 +96,12 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
     this->timing_started_ = true;
     this->last_observation_ms_ = now_ms;
   }
+
   for (size_t i = 0; i < kBins; i++) this->accumulator_[i] += frame[i];
   if (this->accumulator_count_ < UINT16_MAX) this->accumulator_count_++;
-  if (now_ms - this->last_observation_ms_ < kUpdateIntervalMs) return false;
+
+  if (static_cast<uint32_t>(now_ms - this->last_observation_ms_) < kUpdateIntervalMs) return false;
+
   const float inv = this->accumulator_count_ > 0 ? 1.0f / this->accumulator_count_ : 1.0f;
   for (size_t i = 0; i < kBins; i++) {
     observation[i] = this->accumulator_[i] * inv;
@@ -80,147 +112,41 @@ bool MvsAlgorithm::make_observation_(const float *frame, uint32_t now_ms, float 
   return true;
 }
 
-MvsAlgorithm::FrameFeatures MvsAlgorithm::compute_features_(const float *frame) const {
-  float delta[kBins]{};
-  float common = 0.0f;
-  for (size_t i = 0; i < kBins; i++) { delta[i] = frame[i] - baseline_[i]; common += delta[i]; }
-  common /= kBins;
-  float spatial_energy = 0.0f, residual_abs = 0.0f, roughness = 0.0f;
+float MvsAlgorithm::temporal_jitter_(const float *observation) {
+  float mean = 0.0f;
+  for (size_t i = 0; i < kBins; i++) mean += observation[i];
+  mean /= static_cast<float>(kBins);
+
+  float profile[kBins]{};
+  for (size_t i = 0; i < kBins; i++) profile[i] = observation[i] - mean;
+
+  if (!this->have_previous_profile_) {
+    for (size_t i = 0; i < kBins; i++) this->previous_profile_[i] = profile[i];
+    this->have_previous_profile_ = true;
+    return 0.0f;
+  }
+
+  float energy = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
-    const float norm = std::max(noise_[i], NOISE_FLOOR);
-    const float residual = (delta[i] - common) / norm;
-    spatial_energy += residual * residual;
-    residual_abs += std::fabs(residual);
-    if (i > 0) {
-      const float prev_residual = delta[i - 1] - common;
-      const float edge_norm = std::max((noise_[i] + noise_[i - 1]) * 0.5f, NOISE_FLOOR);
-      roughness += std::fabs(((delta[i] - common) - prev_residual) / edge_norm);
-    }
+    const float delta = profile[i] - this->previous_profile_[i];
+    energy += delta * delta;
+    this->previous_profile_[i] = profile[i];
   }
-  const float common_energy = (common * common * kBins) / (NOISE_FLOOR * NOISE_FLOOR);
-  return FrameFeatures{std::sqrt(spatial_energy / kBins), residual_abs / kBins,
-                       roughness / (kBins - 1), common_energy / (common_energy + spatial_energy + EPS)};
+  return std::sqrt(energy / static_cast<float>(kBins) + EPS);
 }
 
-void MvsAlgorithm::update_baseline_(const float *frame, bool channel_drift) {
-  if (baseline_samples_ == 0) {
-    for (size_t i = 0; i < kBins; i++) { baseline_[i] = frame[i]; noise_[i] = 0.08f; }
-    baseline_samples_ = 1;
-    return;
-  }
-  if (!baseline_initialized_) {
-    for (size_t i = 0; i < kBins; i++) {
-      const float delta = frame[i] - baseline_[i];
-      baseline_[i] += delta / static_cast<float>(baseline_samples_ + 1);
-      noise_[i] += (std::fabs(delta) - noise_[i]) / static_cast<float>(baseline_samples_ + 1);
-      noise_[i] = std::max(noise_[i], NOISE_FLOOR);
-    }
-    baseline_samples_++;
-    baseline_initialized_ = baseline_samples_ >= BASELINE_BOOT_SAMPLES;
-    return;
-  }
-  const float alpha = channel_drift ? BASELINE_ALPHA_CHANNEL : BASELINE_ALPHA_QUIET;
-  for (size_t i = 0; i < kBins; i++) {
-    const float delta = frame[i] - baseline_[i];
-    baseline_[i] += alpha * delta;
-    noise_[i] = std::max(NOISE_FLOOR, noise_[i] + alpha * (std::fabs(delta) - noise_[i]));
-  }
+bool MvsAlgorithm::update_filter_(bool above) {
+  if (this->filter_[this->filter_next_]) this->filter_hits_--;
+  this->filter_[this->filter_next_] = above;
+  if (above) this->filter_hits_++;
+  this->filter_next_ = (this->filter_next_ + 1) % kFilterWindow;
+  return this->filter_hits_ >= FILTER_COUNT;
 }
 
-void MvsAlgorithm::push_history_(const FrameFeatures &features) {
-  history_[history_next_] = features;
-  history_next_ = (history_next_ + 1) % kWindowSamples;
-  if (history_count_ < kWindowSamples) history_count_++;
-}
-
-float MvsAlgorithm::score_window_() const {
-  if (history_count_ == 0) return 0.0f;
-  float residual = 0.0f, mad = 0.0f, rough = 0.0f, temporal = 0.0f, rf_penalty = 0.0f;
-  size_t active_frames = 0;
-  for (size_t n = 0; n < history_count_; n++) {
-    const size_t idx = (history_next_ + kWindowSamples - history_count_ + n) % kWindowSamples;
-    const FrameFeatures &f = history_[idx];
-    residual += f.residual_rms; mad += f.residual_mad; rough += f.spatial_roughness; rf_penalty += f.common_ratio;
-    if ((f.residual_rms + f.residual_mad + f.spatial_roughness) > 4.0f) active_frames++;
-    if (n > 0) {
-      const size_t prev = (idx + kWindowSamples - 1) % kWindowSamples;
-      temporal += std::fabs(f.residual_rms - history_[prev].residual_rms) + 0.4f * std::fabs(f.spatial_roughness - history_[prev].spatial_roughness);
-    }
-  }
-  const float inv = 1.0f / history_count_;
-  const float motion_pattern = (1.8f * residual + 2.4f * mad + 1.5f * rough) * inv;
-  const float temporal_texture = history_count_ > 1 ? temporal / (history_count_ - 1) : 0.0f;
-  const float common_factor = 1.0f - std::min(0.75f, (rf_penalty * inv) * 0.75f);
-  const float active_factor = std::min(1.0f, static_cast<float>(active_frames) / 4.0f);
-  return std::max(0.0f, (motion_pattern + 1.2f * temporal_texture) * common_factor * active_factor);
-}
-
-bool MvsAlgorithm::update_fsm_(float score, uint32_t now_ms) {
-  const float enter = threshold_;
-  const float exit = threshold_ * 0.62f;
-  const float temporal_enter = threshold_ * 0.25f;
-  const float temporal_exit = threshold_ * 0.35f;
-
-  // Espressif's motion detector is fundamentally jitter/event based: a threshold
-  // crossing is confirmed several times inside a filter window. Mirror that
-  // principle here. The long-window score says that the RF scene differs from
-  // baseline; recent_activity proves that it is changing NOW. Requiring both on
-  // ENTER prevents a stale high baseline residual from producing OFF -> ON again
-  // three seconds after every 120 s hold.
-  const size_t recent_count = std::min(history_count_, EXIT_RECENT_SAMPLES);
-  float recent_absolute = 0.0f, recent_common = 0.0f, recent_temporal = 0.0f;
-  for (size_t n = 0; n < recent_count; n++) {
-    const size_t idx = (history_next_ + kWindowSamples - recent_count + n) % kWindowSamples;
-    const FrameFeatures &f = history_[idx];
-    recent_absolute += 1.8f * f.residual_rms + 2.4f * f.residual_mad + 1.5f * f.spatial_roughness;
-    recent_common += f.common_ratio;
-    if (n > 0) {
-      const size_t prev_idx = (history_next_ + kWindowSamples - recent_count + n - 1) % kWindowSamples;
-      const FrameFeatures &p = history_[prev_idx];
-      recent_temporal += 1.8f * std::fabs(f.residual_rms - p.residual_rms) +
-                         2.4f * std::fabs(f.residual_mad - p.residual_mad) +
-                         1.5f * std::fabs(f.spatial_roughness - p.spatial_roughness);
-    }
-  }
-  const float recent_inv = recent_count > 0 ? 1.0f / recent_count : 1.0f;
-  const float recent_common_factor = 1.0f - std::min(0.75f, recent_common * recent_inv * 0.75f);
-  const float recent_score = std::max(0.0f, recent_absolute * recent_inv * recent_common_factor);
-  const float recent_activity = recent_count > 1 ? std::max(0.0f, (recent_temporal / (recent_count - 1)) * recent_common_factor) : 0.0f;
-
-  if (!this->motion_state_) {
-    const bool current_motion = score > enter && recent_count >= EXIT_RECENT_SAMPLES && recent_activity > temporal_enter;
-    if (current_motion)
-      this->enter_count_ = std::min<uint8_t>(ENTER_OBSERVATIONS, this->enter_count_ + 1);
-    else
-      this->enter_count_ = 0;
-
-    this->exit_count_ = 0;
-    if (this->enter_count_ >= ENTER_OBSERVATIONS) {
-      this->motion_state_ = true;
-      this->last_motion_time_ = now_ms;
-      this->enter_count_ = 0;
-    }
-    return this->motion_state_;
-  }
-
-  // Keep the user's mandatory 120 s minimum ON time. After that, EXIT uses the
-  // recent signal rather than the stale 32 s score.
-  if (now_ms - this->last_motion_time_ < this->hold_time_ms_) {
-    this->exit_count_ = 0;
-    return true;
-  }
-
-  if (recent_score < exit || recent_activity < temporal_exit)
-    this->exit_count_ = std::min<uint8_t>(EXIT_OBSERVATIONS, this->exit_count_ + 1);
-  else
-    this->exit_count_ = 0;
-
-  if (this->exit_count_ >= EXIT_OBSERVATIONS) {
-    this->motion_state_ = false;
-    this->enter_count_ = 0;
-    this->exit_count_ = 0;
-  }
-  return this->motion_state_;
+void MvsAlgorithm::clear_filter_() {
+  for (size_t i = 0; i < kFilterWindow; i++) this->filter_[i] = false;
+  this->filter_next_ = 0;
+  this->filter_hits_ = 0;
 }
 
 }  // namespace esp_wifi_sensing
