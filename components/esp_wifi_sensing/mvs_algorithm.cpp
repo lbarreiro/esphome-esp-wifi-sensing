@@ -34,7 +34,7 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
   // Espressif's motion path is based on CSI waveform jitter, not distance from
   // a long-lived room baseline. Normalise current temporal jitter by the quiet
   // jitter floor so the existing threshold remains a dimensionless sensitivity.
-  this->last_score_ = jitter / std::max(this->quiet_jitter_, QUIET_FLOOR);
+  this->last_score_ = 2.0f * jitter / std::max(this->quiet_jitter_, QUIET_FLOOR);
 
   if (this->quiet_samples_ < QUIET_BOOT_SAMPLES) {
     this->quiet_jitter_ += (jitter - this->quiet_jitter_) / static_cast<float>(this->quiet_samples_ + 1);
