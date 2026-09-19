@@ -27,25 +27,16 @@ class MvsAlgorithm {
   size_t observation_count() const { return total_observations_; }
 
   static constexpr size_t kBins = 48;
-  static constexpr size_t kWindowSamples = 32;
-  static constexpr uint32_t kUpdateIntervalMs = 1000;
+  static constexpr size_t kFilterWindow = 8;
+  static constexpr uint32_t kUpdateIntervalMs = 100;
   static constexpr uint32_t kMinimumHoldMs = 120000;
 
  private:
-  struct FrameFeatures {
-    float residual_rms{0.0f};
-    float residual_mad{0.0f};
-    float spatial_roughness{0.0f};
-    float common_ratio{0.0f};
-  };
-
   bool make_frame_(const ParsedCsiPacket &packet, float *frame) const;
   bool make_observation_(const float *frame, uint32_t now_ms, float *observation);
-  FrameFeatures compute_features_(const float *frame) const;
-  void update_baseline_(const float *frame, bool channel_drift);
-  void push_history_(const FrameFeatures &features);
-  float score_window_() const;
-  bool update_fsm_(float score, uint32_t now_ms);
+  float temporal_jitter_(const float *observation);
+  bool update_filter_(bool above);
+  void clear_filter_();
 
   float accumulator_[kBins]{};
   uint16_t accumulator_count_{0};
@@ -53,19 +44,17 @@ class MvsAlgorithm {
   uint32_t last_observation_ms_{0};
   size_t total_observations_{0};
 
-  float baseline_[kBins]{};
-  float noise_[kBins]{};
-  bool baseline_initialized_{false};
-  uint32_t baseline_samples_{0};
+  float previous_profile_[kBins]{};
+  bool have_previous_profile_{false};
+  float quiet_jitter_{0.02f};
+  uint32_t quiet_samples_{0};
 
-  FrameFeatures history_[kWindowSamples]{};
-  size_t history_next_{0};
-  size_t history_count_{0};
+  bool filter_[kFilterWindow]{};
+  size_t filter_next_{0};
+  uint8_t filter_hits_{0};
 
   bool motion_state_{false};
   uint32_t last_motion_time_{0};
-  uint8_t enter_count_{0};
-  uint8_t exit_count_{0};
   float threshold_{9.5f};
   uint32_t hold_time_ms_{kMinimumHoldMs};
   float last_score_{0.0f};
