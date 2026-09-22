@@ -1,5 +1,7 @@
 #include "mvs_algorithm.h"
 
+#include "esphome/core/log.h"
+
 namespace esphome {
 namespace esp_wifi_sensing {
 
@@ -10,6 +12,7 @@ constexpr float QUIET_ALPHA = 0.01f;
 constexpr float QUIET_UPDATE_LIMIT = 3.0f;
 constexpr uint8_t FILTER_COUNT = 3;
 constexpr uint32_t QUIET_BOOT_SAMPLES = 20;
+static const char *const TAG = "esp_wifi_sensing.mvs";
 }  // namespace
 
 MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
@@ -47,6 +50,20 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
 
   const bool above = this->last_score_ >= this->threshold_;
   const bool confirmed = this->update_filter_(above);
+
+  // Temporary diagnostic instrumentation. This intentionally does not change
+  // the MVS decision path; it only exposes the values used by the existing
+  // threshold/filter/hold logic so missed hold renewals can be diagnosed.
+  uint32_t hold_remaining_ms = 0;
+  if (this->motion_state_) {
+    const uint32_t elapsed = static_cast<uint32_t>(now_ms - this->last_motion_time_);
+    hold_remaining_ms = elapsed < this->hold_time_ms_ ? this->hold_time_ms_ - elapsed : 0;
+  }
+  ESP_LOGD(TAG,
+           "DIAG score=%.3f threshold=%.2f jitter=%.6f quiet=%.6f above=%u hits=%u/%u confirmed=%u motion=%u hold_remaining=%.1fs",
+           this->last_score_, this->threshold_, jitter, this->quiet_jitter_, above ? 1U : 0U,
+           static_cast<unsigned>(this->filter_hits_), static_cast<unsigned>(kFilterWindow), confirmed ? 1U : 0U,
+           this->motion_state_ ? 1U : 0U, hold_remaining_ms / 1000.0f);
 
   // Equivalent in spirit to Espressif filter_window/filter_count: isolated CSI
   // outliers cannot trigger motion; several jitter excursions inside a short
