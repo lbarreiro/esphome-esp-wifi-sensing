@@ -140,10 +140,6 @@ void ESPWiFiSensing::setup() {
 
 
 void ESPWiFiSensing::loop() {
-  // -------------------------------------------------------
-  // 1. CSI
-  // -------------------------------------------------------
-
   if (!this->csi_started_) {
     if (!this->start_csi_()) {
       delay(1000);
@@ -151,12 +147,8 @@ void ESPWiFiSensing::loop() {
     }
 
     this->csi_started_ = true;
-    ESP_LOGI(TAG, "STEP 5 - CSI enabled");
+    ESP_LOGI(TAG, "CSI enabled");
   }
-
-  // -------------------------------------------------------
-  // 2. Ping ao router
-  // -------------------------------------------------------
 
   if (!this->ping_started_) {
     if (!this->start_ping_()) {
@@ -165,12 +157,21 @@ void ESPWiFiSensing::loop() {
     }
 
     this->ping_started_ = true;
-    ESP_LOGI(TAG, "STEP 5 OK - Router ping started");
+    ESP_LOGI(TAG, "Router ping started");
   }
 
-  // -------------------------------------------------------
-  // 3. Processar nova métrica CSI
-  // -------------------------------------------------------
+  const uint32_t now = millis();
+
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
+    if (!this->new_csi_sample_) {
+      return;
+    }
+    this->new_csi_sample_ = false;
+    if (this->motion_binary_sensor_ != nullptr) {
+      this->motion_binary_sensor_->publish_state(this->motion_state_);
+    }
+    return;
+  }
 
   if (this->new_csi_sample_) {
     const uint32_t metric = this->latest_csi_metric_;
@@ -193,130 +194,54 @@ void ESPWiFiSensing::loop() {
     this->have_previous_sample_ = true;
   }
 
-  // -------------------------------------------------------
-  // 4. Relatório periódico com janela estatística deslizante
-  // -------------------------------------------------------
-
-  const uint32_t now = millis();
-
   if (now - this->last_report_time_ < this->statistics_update_ms_) {
     return;
   }
 
   this->last_report_time_ = now;
-
-  const uint32_t current =
-      this->csi_packet_count_;
-
-  const uint32_t received =
-      current - this->last_reported_count_;
-
+  const uint32_t current = this->csi_packet_count_;
+  const uint32_t received = current - this->last_reported_count_;
   this->last_reported_count_ = current;
 
   uint32_t average_variation = 0;
-
   this->prune_variation_samples_(now);
-
   if (this->variation_window_count_ > 0) {
-    average_variation =
-        this->variation_sum_ /
-        this->variation_window_count_;
+    average_variation = this->variation_sum_ / this->variation_window_count_;
   }
 
-  ESP_LOGI(
-      TAG,
-      "CSI: packets=%u/%us len=%u metric=%u variation avg=%u max=%u samples=%u",
-      static_cast<unsigned>(received),
-      static_cast<unsigned>(this->statistics_update_ms_ / 1000),
-      static_cast<unsigned>(this->latest_csi_len_),
-      static_cast<unsigned>(this->latest_csi_metric_),
-      static_cast<unsigned>(average_variation),
-      static_cast<unsigned>(this->variation_max_),
-      static_cast<unsigned>(this->variation_window_count_)
-  );
+  ESP_LOGI(TAG, "CSI: packets=%u/%us len=%u metric=%u variation avg=%u max=%u samples=%u",
+           static_cast<unsigned>(received), static_cast<unsigned>(this->statistics_update_ms_ / 1000),
+           static_cast<unsigned>(this->latest_csi_len_), static_cast<unsigned>(this->latest_csi_metric_),
+           static_cast<unsigned>(average_variation), static_cast<unsigned>(this->variation_max_),
+           static_cast<unsigned>(this->variation_window_count_));
 
-  if (this->metric_sensor_ != nullptr) {
-    this->metric_sensor_->publish_state(this->latest_csi_metric_);
-  }
-
-  if (this->variation_avg_sensor_ != nullptr) {
-    this->variation_avg_sensor_->publish_state(average_variation);
-  }
 
   if (this->warmup_active_(now)) {
-    const uint32_t elapsed_ms = now < this->warmup_time_ms_ ? now : this->warmup_time_ms_;
-    ESP_LOGI(
-        TAG,
-        "Adaptive baseline warm-up (%u/%u s)",
-        static_cast<unsigned>(elapsed_ms / 1000),
-        static_cast<unsigned>(this->warmup_time_ms_ / 1000)
-    );
-
     this->consecutive_above_threshold_ = 0;
     this->motion_state_ = false;
-
-    if (this->motion_binary_sensor_ != nullptr) {
-      this->motion_binary_sensor_->publish_state(false);
-    }
-
+    if (this->motion_binary_sensor_ != nullptr) this->motion_binary_sensor_->publish_state(false);
     return;
   }
 
-  if (this->warmup_time_ms_ > 0 && !this->warmup_complete_logged_) {
-    ESP_LOGI(TAG, "Adaptive baseline warm-up complete");
-    this->warmup_complete_logged_ = true;
-  }
-
   if (this->adaptive_threshold_enabled_ && !this->adaptive_baseline_.initialized()) {
-    this->adaptive_baseline_.update(
-        static_cast<float>(average_variation),
-        false,
-        now,
-        this->statistics_update_ms_
-    );
+    this->adaptive_baseline_.update(static_cast<float>(average_variation), false, now, this->statistics_update_ms_);
   }
 
-  const float decision_threshold = this->adaptive_threshold_enabled_ ?
-      this->adaptive_baseline_.adaptive_threshold() :
-      static_cast<float>(this->motion_threshold_);
-
+  const float decision_threshold = this->adaptive_threshold_enabled_ ? this->adaptive_baseline_.adaptive_threshold() : this->motion_threshold_;
   bool motion_detected = false;
-
   if (static_cast<float>(average_variation) > decision_threshold) {
     this->consecutive_above_threshold_++;
     motion_detected = this->consecutive_above_threshold_ >= this->motion_debounce_;
   } else {
     this->consecutive_above_threshold_ = 0;
-    motion_detected = false;
   }
 
   if (this->adaptive_threshold_enabled_) {
-    this->adaptive_baseline_.update(
-        static_cast<float>(average_variation),
-        motion_detected,
-        now,
-        this->statistics_update_ms_
-    );
-
-    if (this->baseline_mean_sensor_ != nullptr) {
-      this->baseline_mean_sensor_->publish_state(this->adaptive_baseline_.baseline_mean());
-    }
-
-    if (this->baseline_stddev_sensor_ != nullptr) {
-      this->baseline_stddev_sensor_->publish_state(this->adaptive_baseline_.baseline_stddev());
-    }
-
-    if (this->adaptive_threshold_sensor_ != nullptr) {
-      this->adaptive_threshold_sensor_->publish_state(this->adaptive_baseline_.adaptive_threshold());
-    }
+    this->adaptive_baseline_.update(static_cast<float>(average_variation), motion_detected, now, this->statistics_update_ms_);
   }
 
   this->motion_state_ = this->apply_motion_hold_(motion_detected, now);
-
-  if (this->motion_binary_sensor_ != nullptr) {
-    this->motion_binary_sensor_->publish_state(this->motion_state_);
-  }
-
+  if (this->motion_binary_sensor_ != nullptr) this->motion_binary_sensor_->publish_state(this->motion_state_);
 }
 
 
@@ -590,15 +515,16 @@ void ESPWiFiSensing::csi_callback_(
 
   const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 
-  uint32_t metric = 0;
-
-  if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
-    metric = self->variance_algorithm_.process(parsed_packet);
+  if (self->selected_algorithm_ == CsiAlgorithm::MVS) {
+    const MvsResult result = self->mvs_algorithm_.process(parsed_packet, millis());
+    self->motion_state_ = result.motion;
+    self->latest_csi_metric_ = static_cast<uint32_t>(result.score * 100.0f);
+  } else if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
+    self->latest_csi_metric_ = self->variance_algorithm_.process(parsed_packet);
   } else {
-    metric = self->absolute_sum_algorithm_.process(parsed_packet);
+    self->latest_csi_metric_ = self->absolute_sum_algorithm_.process(parsed_packet);
   }
 
-  self->latest_csi_metric_ = metric;
   self->latest_csi_len_ = self->pipeline_.latest_len();
   self->new_csi_sample_ = self->pipeline_.has_new_sample();
   self->pipeline_.clear_new_sample();
@@ -613,12 +539,12 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(
       TAG,
       "  Algorithm: %s",
-      this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "Variance" : "Absolute Sum"
+      this->selected_algorithm_ == CsiAlgorithm::MVS ? "MVS" : (this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "Variance" : "Absolute Sum")
   );
   ESP_LOGCONFIG(
       TAG,
       "  Metric: %s",
-      this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum"
+      this->selected_algorithm_ == CsiAlgorithm::MVS ? "MVS temporal/spatial classifier" : (this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum")
   );
   ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
   ESP_LOGCONFIG(TAG, "  Adaptive Threshold: %s", this->adaptive_threshold_enabled_ ? "enabled" : "disabled");
@@ -630,13 +556,8 @@ void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "  Motion hold time: %u ms", static_cast<unsigned>(this->motion_hold_time_ms_));
   ESP_LOGCONFIG(TAG, "  Statistics window: %u ms", static_cast<unsigned>(this->statistics_window_ms_));
   ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
-  ESP_LOGCONFIG(TAG, "  Threshold: %u", static_cast<unsigned>(this->motion_threshold_));
+  ESP_LOGCONFIG(TAG, "  Threshold: %.2f", this->motion_threshold_);
   ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
-  LOG_SENSOR("  ", "CSI Metric", this->metric_sensor_);
-  LOG_SENSOR("  ", "CSI Variation Avg", this->variation_avg_sensor_);
-  LOG_SENSOR("  ", "Baseline Mean", this->baseline_mean_sensor_);
-  LOG_SENSOR("  ", "Baseline StdDev", this->baseline_stddev_sensor_);
-  LOG_SENSOR("  ", "Adaptive Threshold", this->adaptive_threshold_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
   ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
