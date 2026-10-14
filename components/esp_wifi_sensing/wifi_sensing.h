@@ -36,6 +36,13 @@ class ESPWiFiSensing : public Component {
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
   void set_motion_threshold(float threshold) { this->motion_threshold_ = threshold; this->mvs_algorithm_.set_threshold(threshold); }
+  void set_filter_window(uint32_t count) { this->mvs_algorithm_.set_filter_window(count); }
+  void set_filter_count(uint32_t count) { this->mvs_algorithm_.set_filter_count(static_cast<uint8_t>(count)); }
+  void set_update_interval(uint32_t ms) { this->mvs_algorithm_.set_update_interval(ms); }
+  void set_quiet_boot_samples(uint32_t count) { this->mvs_algorithm_.set_quiet_boot_samples(count); }
+  void set_quiet_alpha(float alpha) { this->mvs_algorithm_.set_quiet_alpha(alpha); }
+  void set_quiet_update_limit(float limit) { this->mvs_algorithm_.set_quiet_update_limit(limit); }
+  void set_ping_interval(uint32_t ms) { this->ping_interval_ms_ = ms; }
   void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
   void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
   void set_sigma_multiplier(float multiplier) { this->adaptive_baseline_.set_sigma_multiplier(multiplier); this->sigma_multiplier_ = multiplier; }
@@ -112,6 +119,7 @@ class ESPWiFiSensing : public Component {
   uint32_t motion_hold_time_ms_{0};
   uint32_t last_motion_time_{0};
 
+  uint32_t ping_interval_ms_{100};
   esp_ping_handle_t ping_handle_{nullptr};
 
   EspIdfCsiDriver driver_{};
