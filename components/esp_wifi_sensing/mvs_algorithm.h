@@ -24,6 +24,7 @@ class MvsAlgorithm {
   void set_hold_time(uint32_t hold_ms) { hold_time_ms_ = hold_ms < kMinimumHoldMs ? kMinimumHoldMs : hold_ms; }
   MvsResult process(const ParsedCsiPacket &packet, uint32_t now_ms);
   bool motion_state() const { return motion_state_; }
+  uint32_t last_motion_time() const { return last_motion_time_; }
   size_t observation_count() const { return total_observations_; }
 
   static constexpr size_t kBins = 48;
