@@ -136,6 +136,10 @@ void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
   ESP_LOGI(TAG, "STEP 5 - CSI variation test");
   this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS && this->motion_binary_sensor_ != nullptr) {
+    this->motion_binary_sensor_->publish_state(false);
+    this->mvs_initial_state_published_ = true;
+  }
 }
 
 
@@ -163,13 +167,35 @@ void ESPWiFiSensing::loop() {
   const uint32_t now = millis();
 
   if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
-    if (!this->new_csi_sample_) {
-      return;
+    // Hold expiry must run on every ESPHome loop, including when CSI stops.
+    const bool seen = this->mvs_confirmation_seen_.load(std::memory_order_acquire);
+    const uint32_t last = this->mvs_last_confirmation_ms_.load(std::memory_order_relaxed);
+    const bool active = seen && static_cast<uint32_t>(now - last) < this->motion_hold_time_ms_;
+    if (!this->mvs_initial_state_published_ && this->motion_binary_sensor_ != nullptr) {
+      this->motion_binary_sensor_->publish_state(false);
+      this->mvs_initial_state_published_ = true;
+    }
+    if (active != this->mvs_published_state_) {
+      this->mvs_published_state_ = active;
+      ESP_LOGI(TAG, "MVS motion %s (hold=%u ms)", active ? "ON" : "OFF",
+               static_cast<unsigned>(this->motion_hold_time_ms_));
+      if (this->motion_binary_sensor_ != nullptr) this->motion_binary_sensor_->publish_state(active);
+    }
+    if (seen && last != this->mvs_last_logged_confirmation_ms_) {
+      // Throttle refresh logs while retaining the actual timestamp on every confirmation.
+      if (static_cast<uint32_t>(now - this->mvs_last_logged_confirmation_ms_) >= 10000U) {
+        ESP_LOGD(TAG, "MVS hold refreshed (last confirmation=%u)", static_cast<unsigned>(last));
+        this->mvs_last_logged_confirmation_ms_ = last;
+      }
+    }
+    const uint32_t last_observation = this->mvs_last_observation_ms_.load(std::memory_order_relaxed);
+    if (last_observation != 0 && static_cast<uint32_t>(now - last_observation) > 5000U &&
+        static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
+      ESP_LOGW(TAG, "MVS: no valid CSI observation for %u ms",
+               static_cast<unsigned>(now - last_observation));
+      this->mvs_last_stall_log_ms_ = now;
     }
     this->new_csi_sample_ = false;
-    if (this->motion_binary_sensor_ != nullptr) {
-      this->motion_binary_sensor_->publish_state(this->motion_state_);
-    }
     return;
   }
 
@@ -513,7 +539,15 @@ void ESPWiFiSensing::csi_callback_(
   const ParsedCsiPacket &parsed_packet = self->pipeline_.latest_parsed_packet();
 
   if (self->selected_algorithm_ == CsiAlgorithm::MVS) {
-    const MvsResult result = self->mvs_algorithm_.process(parsed_packet, millis());
+    const uint32_t sample_now = millis();
+    const MvsResult result = self->mvs_algorithm_.process(parsed_packet, sample_now);
+    if (result.observation_added) self->mvs_last_observation_ms_.store(sample_now, std::memory_order_relaxed);
+    // Only actual confirmed detections refresh the hold, never stale CSI state.
+    if (result.motion) {
+      const uint32_t confirmed_at = self->mvs_algorithm_.last_motion_time();
+      self->mvs_last_confirmation_ms_.store(confirmed_at, std::memory_order_relaxed);
+      self->mvs_confirmation_seen_.store(true, std::memory_order_release);
+    }
     self->motion_state_ = result.motion;
     self->latest_csi_metric_ = static_cast<uint32_t>(result.score * 100.0f);
   } else if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
