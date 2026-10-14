@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <vector>
 
 #include "esphome/core/component.h"
@@ -119,6 +120,15 @@ class ESPWiFiSensing : public Component {
   uint32_t motion_hold_time_ms_{0};
   uint32_t last_motion_time_{0};
 
+  // Cross-task MVS confirmation snapshot; updated by Wi-Fi CSI callback.
+  std::atomic<uint32_t> mvs_last_confirmation_ms_{0};
+  std::atomic<bool> mvs_confirmation_seen_{false};
+  bool mvs_published_state_{false};
+  bool mvs_initial_state_published_{false};
+  uint32_t mvs_last_logged_confirmation_ms_{0};
+  uint32_t mvs_last_valid_csi_ms_{0};
+  std::atomic<uint32_t> mvs_last_observation_ms_{0};
+  uint32_t mvs_last_stall_log_ms_{0};
   uint32_t ping_interval_ms_{100};
   esp_ping_handle_t ping_handle_{nullptr};
 
