@@ -419,7 +419,7 @@ bool ESPWiFiSensing::start_ping_() {
   ping_config.count = ESP_PING_COUNT_INFINITE;
 
   // Mantemos exatamente os 10 pings/s do Passo 4.
-  ping_config.interval_ms = 100;
+  ping_config.interval_ms = this->ping_interval_ms_;
   ping_config.timeout_ms = 80;
   ping_config.data_size = 32;
 
@@ -464,10 +464,7 @@ bool ESPWiFiSensing::start_ping_() {
     return false;
   }
 
-  ESP_LOGI(
-      TAG,
-      "Router ping running: interval=100ms (~10 pings/s)"
-  );
+  ESP_LOGI(TAG, "Router ping running: interval=%u ms", static_cast<unsigned>(this->ping_interval_ms_));
 
   return true;
 }
