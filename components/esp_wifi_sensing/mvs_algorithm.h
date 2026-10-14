@@ -27,8 +27,13 @@ class MvsAlgorithm {
   size_t observation_count() const { return total_observations_; }
 
   static constexpr size_t kBins = 48;
-  static constexpr size_t kFilterWindow = 8;
-  static constexpr uint32_t kUpdateIntervalMs = 100;
+  static constexpr size_t kMaxFilterWindow = 64;
+  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); }
+  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); }
+  void set_update_interval(uint32_t ms) { update_interval_ms_ = ms; }
+  void set_quiet_boot_samples(uint32_t count) { quiet_boot_samples_ = count; }
+  void set_quiet_alpha(float alpha) { quiet_alpha_ = alpha; }
+  void set_quiet_update_limit(float limit) { quiet_update_limit_ = limit; }
   static constexpr uint32_t kMinimumHoldMs = 120000;
 
  private:
@@ -49,7 +54,13 @@ class MvsAlgorithm {
   float quiet_jitter_{0.02f};
   uint32_t quiet_samples_{0};
 
-  bool filter_[kFilterWindow]{};
+  bool filter_[kMaxFilterWindow]{};
+  size_t filter_window_{8};
+  uint8_t filter_count_{3};
+  uint32_t update_interval_ms_{100};
+  uint32_t quiet_boot_samples_{20};
+  float quiet_alpha_{0.01f};
+  float quiet_update_limit_{3.0f};
   size_t filter_next_{0};
   uint8_t filter_hits_{0};
 
