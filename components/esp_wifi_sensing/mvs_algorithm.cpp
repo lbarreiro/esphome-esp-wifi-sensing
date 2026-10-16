@@ -41,6 +41,15 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
                      this->total_observations_};
   }
 
+  // The ESPHome loop can expire the published ON state even when CSI is absent.
+  // Synchronize the algorithm's internal state before choosing the confirmation
+  // requirement, so stale ON never gets the more permissive renewal threshold.
+  if (this->motion_state_ &&
+      static_cast<uint32_t>(now_ms - this->last_motion_time_) >= this->hold_time_ms_) {
+    this->motion_state_ = false;
+    this->clear_filter_();
+  }
+
   const bool above = this->last_score_ >= this->threshold_;
   const bool confirmed = this->update_filter_(above);
 
@@ -136,7 +145,10 @@ bool MvsAlgorithm::update_filter_(bool above) {
   this->filter_[this->filter_next_] = above;
   if (above) this->filter_hits_++;
   this->filter_next_ = (this->filter_next_ + 1) % this->filter_window_;
-  return this->filter_hits_ >= this->filter_count_;
+  // OFF -> ON uses the configured count (3 by default).
+  // While ON, two fresh peaks in the same window renew the 120-second hold.
+  const uint8_t required_hits = this->motion_state_ ? 2 : this->filter_count_;
+  return this->filter_hits_ >= required_hits;
 }
 
 void MvsAlgorithm::clear_filter_() {
