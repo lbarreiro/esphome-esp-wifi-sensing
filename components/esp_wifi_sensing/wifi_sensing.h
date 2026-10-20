@@ -126,7 +126,10 @@ class ESPWiFiSensing : public Component {
   bool mvs_published_state_{false};
   bool mvs_initial_state_published_{false};
   uint32_t mvs_last_logged_confirmation_ms_{0};
-  uint32_t mvs_last_valid_csi_ms_{0};
+  std::atomic<uint32_t> mvs_last_packet_ms_{0};
+  std::atomic<uint32_t> mvs_last_accepted_ms_{0};
+  std::atomic<uint32_t> mvs_rejected_packets_{0};
+  uint32_t mvs_diagnostic_started_ms_{0};
   std::atomic<uint32_t> mvs_last_observation_ms_{0};
   uint32_t mvs_last_stall_log_ms_{0};
   uint32_t ping_interval_ms_{100};
