@@ -134,7 +134,7 @@ void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
 
 void ESPWiFiSensing::setup() {
   ESP_LOGI(TAG, "ESP Wi-Fi Sensing bridge starting...");
-  ESP_LOGI(TAG, "STEP 5 - CSI variation test");
+  ESP_LOGI(TAG, "CSI sensing initialization");
   this->pipeline_.set_gain_compensation_enabled(this->gain_compensation_enabled_);
   if (this->selected_algorithm_ == CsiAlgorithm::MVS && this->motion_binary_sensor_ != nullptr) {
     this->motion_binary_sensor_->publish_state(false);
@@ -188,11 +188,23 @@ void ESPWiFiSensing::loop() {
         this->mvs_last_logged_confirmation_ms_ = last;
       }
     }
+    const uint32_t last_packet = this->mvs_last_packet_ms_.load(std::memory_order_relaxed);
+    const uint32_t last_accepted = this->mvs_last_accepted_ms_.load(std::memory_order_relaxed);
     const uint32_t last_observation = this->mvs_last_observation_ms_.load(std::memory_order_relaxed);
-    if (last_observation != 0 && static_cast<uint32_t>(now - last_observation) > 5000U &&
-        static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
-      ESP_LOGW(TAG, "MVS: no valid CSI observation for %u ms",
-               static_cast<unsigned>(now - last_observation));
+    if (this->mvs_diagnostic_started_ms_ == 0) this->mvs_diagnostic_started_ms_ = now;
+    const uint32_t packet_age = now - (last_packet ? last_packet : this->mvs_diagnostic_started_ms_);
+    const uint32_t accepted_age = now - (last_accepted ? last_accepted : this->mvs_diagnostic_started_ms_);
+    const uint32_t observation_age = now - (last_observation ? last_observation : this->mvs_diagnostic_started_ms_);
+    if (observation_age > 5000U && static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
+      if (packet_age > 5000U) {
+        ESP_LOGW(TAG, "MVS CSI stalled: no CSI packets for %u ms", static_cast<unsigned>(packet_age));
+      } else if (accepted_age > 5000U) {
+        ESP_LOGW(TAG, "MVS CSI stalled: packets received but unsupported/rejected for %u ms (rejected=%u)",
+                 static_cast<unsigned>(accepted_age), static_cast<unsigned>(this->mvs_rejected_packets_.load(std::memory_order_relaxed)));
+      } else {
+        ESP_LOGW(TAG, "MVS CSI stalled: valid packets received but no observations for %u ms",
+                 static_cast<unsigned>(observation_age));
+      }
       this->mvs_last_stall_log_ms_ = now;
     }
     this->new_csi_sample_ = false;
@@ -513,6 +525,8 @@ void ESPWiFiSensing::csi_callback_(
       static_cast<ESPWiFiSensing *>(ctx);
 
   self->csi_packet_count_++;
+  if (self->selected_algorithm_ == CsiAlgorithm::MVS)
+    self->mvs_last_packet_ms_.store(millis(), std::memory_order_relaxed);
 
   // -------------------------------------------------------
   // Métrica experimental para o teste.
@@ -540,6 +554,10 @@ void ESPWiFiSensing::csi_callback_(
 
   if (self->selected_algorithm_ == CsiAlgorithm::MVS) {
     const uint32_t sample_now = millis();
+    if (parsed_packet.layout_supported && parsed_packet.count >= MvsAlgorithm::kBins)
+      self->mvs_last_accepted_ms_.store(sample_now, std::memory_order_relaxed);
+    else
+      self->mvs_rejected_packets_.fetch_add(1, std::memory_order_relaxed);
     const MvsResult result = self->mvs_algorithm_.process(parsed_packet, sample_now);
     if (result.observation_added) self->mvs_last_observation_ms_.store(sample_now, std::memory_order_relaxed);
     // Only actual confirmed detections refresh the hold, never stale CSI state.
@@ -564,35 +582,29 @@ void ESPWiFiSensing::csi_callback_(
 
 void ESPWiFiSensing::dump_config() {
   ESP_LOGCONFIG(TAG, "ESP Wi-Fi Sensing:");
-  ESP_LOGCONFIG(TAG, "  STEP 5 - CSI variation");
-  ESP_LOGCONFIG(TAG, "  CSI callback: ENABLED");
-  ESP_LOGCONFIG(TAG, "  Router ping: 10 pings/s");
-  ESP_LOGCONFIG(
-      TAG,
-      "  Algorithm: %s",
-      this->selected_algorithm_ == CsiAlgorithm::MVS ? "MVS" : (this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "Variance" : "Absolute Sum")
-  );
-  ESP_LOGCONFIG(
-      TAG,
-      "  Metric: %s",
-      this->selected_algorithm_ == CsiAlgorithm::MVS ? "MVS temporal/spatial classifier" : (this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "temporal CSI variance" : "absolute CSI sum")
-  );
-  ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "ENABLED" : "disabled");
-  ESP_LOGCONFIG(TAG, "  Adaptive Threshold: %s", this->adaptive_threshold_enabled_ ? "enabled" : "disabled");
-  ESP_LOGCONFIG(TAG, "  Sigma multiplier: %.2f", this->sigma_multiplier_);
-  ESP_LOGCONFIG(TAG, "  Baseline rise time: %u ms", static_cast<unsigned>(this->baseline_rise_time_ms_));
-  ESP_LOGCONFIG(TAG, "  Baseline fall time: %u ms", static_cast<unsigned>(this->baseline_fall_time_ms_));
-  ESP_LOGCONFIG(TAG, "  Learning delay: %u ms", static_cast<unsigned>(this->learning_delay_ms_));
-  ESP_LOGCONFIG(TAG, "  Warm-up time: %u ms", static_cast<unsigned>(this->warmup_time_ms_));
-  ESP_LOGCONFIG(TAG, "  Motion hold time: %u ms", static_cast<unsigned>(this->motion_hold_time_ms_));
-  ESP_LOGCONFIG(TAG, "  Statistics window: %u ms", static_cast<unsigned>(this->statistics_window_ms_));
-  ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
+  ESP_LOGCONFIG(TAG, "  Algorithm: %s",
+                this->selected_algorithm_ == CsiAlgorithm::MVS ? "MVS" :
+                (this->selected_algorithm_ == CsiAlgorithm::VARIANCE ? "Variance" : "Absolute Sum"));
+  ESP_LOGCONFIG(TAG, "  Router ping: interval=%u ms (%.2f pings/s)",
+                static_cast<unsigned>(this->ping_interval_ms_), 1000.0f / this->ping_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Gain compensation: %s", this->gain_compensation_enabled_ ? "enabled" : "disabled");
   ESP_LOGCONFIG(TAG, "  Threshold: %.2f", this->motion_threshold_);
-  ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
+  ESP_LOGCONFIG(TAG, "  Motion hold: %u ms", static_cast<unsigned>(this->motion_hold_time_ms_));
+  if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
+    ESP_LOGCONFIG(TAG, "  MVS renewal: fixed 2 peaks per window");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Adaptive threshold: %s", this->adaptive_threshold_enabled_ ? "enabled" : "disabled");
+    ESP_LOGCONFIG(TAG, "  Sigma multiplier: %.2f", this->sigma_multiplier_);
+    ESP_LOGCONFIG(TAG, "  Baseline rise: %u ms", static_cast<unsigned>(this->baseline_rise_time_ms_));
+    ESP_LOGCONFIG(TAG, "  Baseline fall: %u ms", static_cast<unsigned>(this->baseline_fall_time_ms_));
+    ESP_LOGCONFIG(TAG, "  Learning delay: %u ms", static_cast<unsigned>(this->learning_delay_ms_));
+    ESP_LOGCONFIG(TAG, "  Warm-up: %u ms", static_cast<unsigned>(this->warmup_time_ms_));
+    ESP_LOGCONFIG(TAG, "  Statistics window: %u ms", static_cast<unsigned>(this->statistics_window_ms_));
+    ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
+    ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
+  }
   LOG_BINARY_SENSOR("  ", "CSI Motion", this->motion_binary_sensor_);
-  ESP_LOGCONFIG(TAG, "  esp-radar processing: NOT STARTED");
 }
-
 
 }  // namespace esp_wifi_sensing
 }  // namespace esphome
