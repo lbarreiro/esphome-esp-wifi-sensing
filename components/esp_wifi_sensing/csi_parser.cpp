@@ -7,11 +7,12 @@ namespace esp_wifi_sensing {
 
 namespace {
 
+constexpr uint16_t CSI_LEN_HT20_SINGLE_LTF = 128;
 constexpr uint16_t CSI_LEN_HT20_DUAL_LTF = 256;
 
 }  // namespace
 
-const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet) {
+const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet, bool allow_128) {
   this->reset_();
 
   if (packet.raw_bytes == nullptr || packet.len < 2) {
@@ -20,7 +21,7 @@ const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet) {
 
   this->parsed_packet_.first_word_invalid = packet.first_word_invalid;
 
-  if (packet.len != CSI_LEN_HT20_DUAL_LTF) {
+  if (packet.len != CSI_LEN_HT20_DUAL_LTF && !(allow_128 && packet.len == CSI_LEN_HT20_SINGLE_LTF)) {
     return this->parsed_packet_;
   }
 
@@ -30,8 +31,10 @@ const ParsedCsiPacket &CsiParser::parse(const CsiPacket &packet) {
 
   this->parse_range_(packet, offset, 0, 31, PhyMode::HT20);  // LLTF
   this->parse_range_(packet, offset, -32, -1, PhyMode::HT20);
-  this->parse_range_(packet, offset, 0, 31, PhyMode::HT20);  // HT-LTF
-  this->parse_range_(packet, offset, -32, -1, PhyMode::HT20);
+  if (packet.len == CSI_LEN_HT20_DUAL_LTF) {
+    this->parse_range_(packet, offset, 0, 31, PhyMode::HT20);  // HT-LTF
+    this->parse_range_(packet, offset, -32, -1, PhyMode::HT20);
+  }
 
   return this->parsed_packet_;
 }
