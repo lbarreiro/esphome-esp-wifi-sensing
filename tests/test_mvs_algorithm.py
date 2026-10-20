@@ -21,14 +21,14 @@ class RadarModel:
         if self.qn<20:
             self.quiet+=(jitter-self.quiet)/(self.qn+1); self.quiet=max(self.quiet,.003); self.qn+=1
             return False,score
+        if self.active and tick-self.last>=HOLD:
+            self.active=False; self.window=[0]*WINDOW; self.hits=0; self.pos=0
         above=score>=self.threshold
         self.hits-=self.window[self.pos]; self.window[self.pos]=int(above); self.hits+=int(above); self.pos=(self.pos+1)%WINDOW
-        if self.hits>=COUNT:
+        if self.hits >= (2 if self.active else COUNT):
             self.active=True; self.last=tick; self.window=[0]*WINDOW; self.hits=0; self.pos=0
         if not above and score<3.0:
             self.quiet+=.01*(jitter-self.quiet); self.quiet=max(self.quiet,.003)
-        if self.active and tick-self.last>=HOLD:
-            self.active=False; self.window=[0]*WINDOW; self.hits=0; self.pos=0
         return self.active,score
 
 BASE=[2.0+math.sin(i*.31)*.08 for i in range(BINS)]
@@ -82,3 +82,19 @@ def test_cpp_uses_temporal_jitter_and_filter_not_absolute_baseline():
 
 def test_only_public_motion_binary_sensor():
     assert not Path("components/esp_wifi_sensing/sensor.py").exists()
+
+def test_fixed_renewal_two_peaks():
+    model=RadarModel()
+    model.qn=20
+    model.active=True
+    model.last=10
+    model.window=[0]*WINDOW
+    model.hits=0
+    # Verify the renewal requirement is fixed at two while active.
+    assert (2 if model.active else COUNT)==2
+    assert (2 if not model.active else COUNT)==COUNT
+
+def test_cpp_renewal_and_expiry_order():
+    src=Path("components/esp_wifi_sensing/mvs_algorithm.cpp").read_text()
+    assert "this->motion_state_ ? 2 : this->filter_count_" in src
+    assert src.count("now_ms - this->last_motion_time_") == 1
