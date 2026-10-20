@@ -36,13 +36,14 @@ class ESPWiFiSensing : public Component {
   void set_gain_compensation_enabled(bool enabled);
   void set_algorithm(CsiAlgorithm algorithm) { this->selected_algorithm_ = algorithm; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_binary_sensor_ = sensor; }
-  void set_motion_threshold(float threshold) { this->motion_threshold_ = threshold; this->mvs_algorithm_.set_threshold(threshold); }
-  void set_filter_window(uint32_t count) { this->mvs_algorithm_.set_filter_window(count); }
-  void set_filter_count(uint32_t count) { this->mvs_algorithm_.set_filter_count(static_cast<uint8_t>(count)); }
-  void set_update_interval(uint32_t ms) { this->mvs_algorithm_.set_update_interval(ms); }
-  void set_quiet_boot_samples(uint32_t count) { this->mvs_algorithm_.set_quiet_boot_samples(count); }
-  void set_quiet_alpha(float alpha) { this->mvs_algorithm_.set_quiet_alpha(alpha); }
-  void set_quiet_update_limit(float limit) { this->mvs_algorithm_.set_quiet_update_limit(limit); }
+  void set_motion_128_binary_sensor(binary_sensor::BinarySensor *sensor) { this->motion_128_binary_sensor_ = sensor; }
+  void set_motion_threshold(float threshold) { this->motion_threshold_ = threshold; this->mvs_algorithm_.set_threshold(threshold); this->mvs_128_algorithm_.set_threshold(threshold); }
+  void set_filter_window(uint32_t count) { this->mvs_algorithm_.set_filter_window(count); this->mvs_128_algorithm_.set_filter_window(count); }
+  void set_filter_count(uint32_t count) { this->mvs_algorithm_.set_filter_count(static_cast<uint8_t>(count)); this->mvs_128_algorithm_.set_filter_count(static_cast<uint8_t>(count)); }
+  void set_update_interval(uint32_t ms) { this->mvs_algorithm_.set_update_interval(ms); this->mvs_128_algorithm_.set_update_interval(ms); }
+  void set_quiet_boot_samples(uint32_t count) { this->mvs_algorithm_.set_quiet_boot_samples(count); this->mvs_128_algorithm_.set_quiet_boot_samples(count); }
+  void set_quiet_alpha(float alpha) { this->mvs_algorithm_.set_quiet_alpha(alpha); this->mvs_128_algorithm_.set_quiet_alpha(alpha); }
+  void set_quiet_update_limit(float limit) { this->mvs_algorithm_.set_quiet_update_limit(limit); this->mvs_128_algorithm_.set_quiet_update_limit(limit); }
   void set_ping_interval(uint32_t ms) { this->ping_interval_ms_ = ms; }
   void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
   void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
@@ -51,7 +52,7 @@ class ESPWiFiSensing : public Component {
   void set_baseline_fall_time(uint32_t time_ms) { this->adaptive_baseline_.set_baseline_fall_time(time_ms); this->baseline_fall_time_ms_ = time_ms; }
   void set_learning_delay(uint32_t delay_ms) { this->adaptive_baseline_.set_learning_delay(delay_ms); this->learning_delay_ms_ = delay_ms; }
   void set_warmup_time(uint32_t time_ms) { this->warmup_time_ms_ = time_ms; }
-  void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms < MvsAlgorithm::kMinimumHoldMs ? MvsAlgorithm::kMinimumHoldMs : time_ms; this->mvs_algorithm_.set_hold_time(this->motion_hold_time_ms_); }
+  void set_motion_hold_time(uint32_t time_ms) { this->motion_hold_time_ms_ = time_ms < MvsAlgorithm::kMinimumHoldMs ? MvsAlgorithm::kMinimumHoldMs : time_ms; this->mvs_algorithm_.set_hold_time(this->motion_hold_time_ms_); this->mvs_128_algorithm_.set_hold_time(this->motion_hold_time_ms_); }
   void set_statistics_window(uint32_t time_ms) { this->statistics_window_ms_ = time_ms; }
   void set_statistics_update(uint32_t time_ms) { this->statistics_update_ms_ = time_ms; }
 
@@ -104,6 +105,7 @@ class ESPWiFiSensing : public Component {
   CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
 
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
+  binary_sensor::BinarySensor *motion_128_binary_sensor_{nullptr};
 
   bool adaptive_threshold_enabled_{true};
   float sigma_multiplier_{4.0f};
@@ -122,6 +124,10 @@ class ESPWiFiSensing : public Component {
 
   // Cross-task MVS confirmation snapshot; updated by Wi-Fi CSI callback.
   std::atomic<uint32_t> mvs_last_confirmation_ms_{0};
+  std::atomic<uint32_t> mvs_128_last_confirmation_ms_{0};
+  std::atomic<bool> mvs_128_confirmation_seen_{false};
+  bool mvs_128_published_state_{false};
+  bool mvs_128_initial_state_published_{false};
   std::atomic<bool> mvs_confirmation_seen_{false};
   bool mvs_published_state_{false};
   bool mvs_initial_state_published_{false};
@@ -140,6 +146,8 @@ class ESPWiFiSensing : public Component {
   AbsoluteSumAlgorithm absolute_sum_algorithm_{};
   VarianceAlgorithm variance_algorithm_{};
   MvsAlgorithm mvs_algorithm_{};
+  CsiParser csi_128_parser_{};
+  MvsAlgorithm mvs_128_algorithm_{};
 };
 
 }  // namespace esp_wifi_sensing
