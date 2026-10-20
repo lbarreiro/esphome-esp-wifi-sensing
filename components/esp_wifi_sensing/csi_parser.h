@@ -28,7 +28,7 @@ struct ParsedCsiPacket {
 
 class CsiParser {
  public:
-  const ParsedCsiPacket &parse(const CsiPacket &packet);
+  const ParsedCsiPacket &parse(const CsiPacket &packet, bool allow_128 = false);
   const ParsedCsiPacket &latest_packet() const { return parsed_packet_; }
 
  private:
