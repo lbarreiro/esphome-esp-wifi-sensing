@@ -71,11 +71,6 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
     this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
   }
 
-  if (this->motion_state_ && static_cast<uint32_t>(now_ms - this->last_motion_time_) >= this->hold_time_ms_) {
-    this->motion_state_ = false;
-    this->clear_filter_();
-  }
-
   return MvsResult{true, this->motion_state_, this->last_score_, true, this->total_observations_};
 }
 
