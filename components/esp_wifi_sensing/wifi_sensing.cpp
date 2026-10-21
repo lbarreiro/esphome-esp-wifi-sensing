@@ -491,7 +491,9 @@ bool ESPWiFiSensing::start_ping_() {
       ESP_PING_DEFAULT_CONFIG();
 
   ip_addr_t target_addr{};
+  #if LWIP_IPV6
   target_addr.type = IPADDR_TYPE_V4;
+  #endif
 
   ip4_addr_set_u32(
       ip_2_ip4(&target_addr),
