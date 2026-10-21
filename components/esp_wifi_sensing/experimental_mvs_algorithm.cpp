@@ -4,7 +4,7 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 namespace {
-constexpr float EPS = 1.0e-4f;
+constexpr float JITTER_EPSILON = 1.0e-4f;
 constexpr float QUIET_FLOOR = 0.003f;
 }  // namespace
 
@@ -163,7 +163,7 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     weight_sum += learning_.weights()[i];
     this->previous_profile_[i] = profile[i];
   }
-  return std::sqrt(energy / weight_sum + EPS);
+  return std::sqrt(energy / weight_sum + JITTER_EPSILON);
 }
 
 bool ExperimentalMvsAlgorithm::update_filter_(bool above) {
