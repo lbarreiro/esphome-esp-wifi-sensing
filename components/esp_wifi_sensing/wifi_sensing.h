@@ -71,6 +71,9 @@ class ESPWiFiSensing : public Component {
 
   // CSI
   volatile uint32_t csi_packet_count_{0};
+  std::atomic<uint32_t> csi_128_packet_count_{0};
+  std::atomic<uint32_t> csi_256_packet_count_{0};
+  uint32_t csi_length_last_log_ms_{0};
 
   // Métrica calculada a partir do buffer CSI.
   volatile uint32_t latest_csi_metric_{0};
