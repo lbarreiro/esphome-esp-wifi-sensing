@@ -170,6 +170,14 @@ void ESPWiFiSensing::loop() {
 
   const uint32_t now = millis();
 
+  if (this->csi_length_last_log_ms_ == 0) this->csi_length_last_log_ms_ = now;
+  if (static_cast<uint32_t>(now - this->csi_length_last_log_ms_) >= 60000U) {
+    this->csi_length_last_log_ms_ = now;
+    ESP_LOGI(TAG, "CSI cumulative packets: 128 bytes=%u | 256 bytes=%u",
+             static_cast<unsigned>(this->csi_128_packet_count_.load(std::memory_order_relaxed)),
+             static_cast<unsigned>(this->csi_256_packet_count_.load(std::memory_order_relaxed)));
+  }
+
   if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
     // Independent 128-byte comparison output: never affects the 256-byte decision.
     if (this->motion_128_binary_sensor_ != nullptr) {
@@ -545,6 +553,8 @@ void ESPWiFiSensing::csi_callback_(
       static_cast<ESPWiFiSensing *>(ctx);
 
   self->csi_packet_count_++;
+  if (data->len == 128) self->csi_128_packet_count_.fetch_add(1, std::memory_order_relaxed);
+  if (data->len == 256) self->csi_256_packet_count_.fetch_add(1, std::memory_order_relaxed);
   if (self->selected_algorithm_ == CsiAlgorithm::MVS)
     self->mvs_last_packet_ms_.store(millis(), std::memory_order_relaxed);
 
