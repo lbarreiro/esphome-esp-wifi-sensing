@@ -179,6 +179,24 @@ void ESPWiFiSensing::loop() {
   }
 
   if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
+    if (motion_3_binary_sensor_ != nullptr) {
+      const bool seen_3 = mvs_3_confirmation_seen_.load(std::memory_order_acquire);
+      const uint32_t last_3 = mvs_3_last_confirmation_ms_.load(std::memory_order_relaxed);
+      const bool active_3 = seen_3 && static_cast<uint32_t>(now - last_3) < motion_hold_time_ms_;
+      if (!mvs_3_initial_state_published_ || active_3 != mvs_3_published_state_) {
+        motion_3_binary_sensor_->publish_state(active_3);
+        mvs_3_published_state_ = active_3;
+        mvs_3_initial_state_published_ = true;
+      }
+      if (static_cast<uint32_t>(now - learn_last_log_ms_) >= 60000U) {
+        learn_last_log_ms_ = now;
+        ESP_LOGI(TAG, "MVS3 learn q=%u ep=%u reject=%u rev=%u hi=%u:%.2f/%.2f lo=%u:%.2f/%.2f (candidate/weight)",
+          static_cast<unsigned>(learn_quiet_.load()), static_cast<unsigned>(learn_episodes_.load()),
+          static_cast<unsigned>(learn_rejected_.load()), static_cast<unsigned>(learn_revisions_.load()),
+          static_cast<unsigned>(learn_best_.load()), learn_best_candidate_.load(), learn_best_weight_.load(),
+          static_cast<unsigned>(learn_low_.load()), learn_low_candidate_.load(), learn_low_weight_.load());
+      }
+    }
     // Independent 128-byte comparison output: never affects the 256-byte decision.
     if (this->motion_128_binary_sensor_ != nullptr) {
       const bool seen_128 = this->mvs_128_confirmation_seen_.load(std::memory_order_acquire);
@@ -609,6 +627,31 @@ void ESPWiFiSensing::csi_callback_(
     }
     self->motion_state_ = result.motion;
     self->latest_csi_metric_ = static_cast<uint32_t>(result.score * 100.0f);
+    // Third branch parses ORIGINAL bytes, before gain compensation. It cannot
+    // inspect result, primary motion state, or the 128-byte comparison state.
+    if (packet.len == 256 && self->motion_3_binary_sensor_ != nullptr) {
+      const auto &raw_256 = self->csi_3_parser_.parse(packet);
+      const auto third = self->mvs_3_algorithm_.process(raw_256, sample_now);
+      if (third.motion) {
+        self->mvs_3_last_confirmation_ms_.store(self->mvs_3_algorithm_.last_motion_time(), std::memory_order_relaxed);
+        self->mvs_3_confirmation_seen_.store(true, std::memory_order_release);
+      }
+      if (third.observation_added) {
+        const auto &learn = self->mvs_3_algorithm_.learning();
+        self->learn_quiet_.store(learn.quiet_blocks());
+        self->learn_episodes_.store(learn.episodes());
+        self->learn_rejected_.store(learn.rejected());
+        self->learn_revisions_.store(learn.revisions());
+        size_t hi = 0, lo = 0;
+        for (size_t i = 1; i < CsiLearning::kBins; ++i) {
+          if (learn.candidate(i) > learn.candidate(hi)) hi = i;
+          if (learn.candidate(i) < learn.candidate(lo)) lo = i;
+        }
+        self->learn_best_.store(hi); self->learn_low_.store(lo);
+        self->learn_best_candidate_.store(learn.candidate(hi)); self->learn_best_weight_.store(learn.weights()[hi]);
+        self->learn_low_candidate_.store(learn.candidate(lo)); self->learn_low_weight_.store(learn.weights()[lo]);
+      }
+    }
   } else if (self->selected_algorithm_ == CsiAlgorithm::VARIANCE) {
     self->latest_csi_metric_ = self->variance_algorithm_.process(parsed_packet);
   } else {
@@ -647,6 +690,7 @@ void ESPWiFiSensing::dump_config() {
     ESP_LOGCONFIG(TAG, "  Statistics update: %u ms", static_cast<unsigned>(this->statistics_update_ms_));
     ESP_LOGCONFIG(TAG, "  Debounce: %u", static_cast<unsigned>(this->motion_debounce_));
   }
+  LOG_BINARY_SENSOR("  ", "CSI Motion 256 Learned", this->motion_3_binary_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion 256", this->motion_binary_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion 128 Comparison", this->motion_128_binary_sensor_);
 }

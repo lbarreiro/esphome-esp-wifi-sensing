@@ -1,0 +1,50 @@
+esphome:
+  name: wifi-sensing-three-branches
+  friendly_name: WiFi Sensing Three Branches
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+
+ota:
+  - platform: esphome
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [esp_wifi_sensing]
+
+esp_wifi_sensing:
+  id: wifi_sensing
+  algorithm: mvs
+  gain_compensation: false
+  threshold: 8.0
+  filter_window: 8
+  filter_count: 3
+  update_interval: 100ms
+  quiet_boot_samples: 20
+  quiet_alpha: 0.01
+  quiet_update_limit: 3.0
+  motion_hold_time: 120s
+  ping_interval: 100ms
+
+binary_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    motion:
+      name: CSI Motion 256 Reference
+    motion_128:
+      name: CSI Motion 128 Comparison
+    motion_3:
+      name: CSI Motion 256 Learned

@@ -1,0 +1,31 @@
+name: MVS3 validation
+on:
+  push:
+    branches: [feature/mvs3-raw-episode-learning]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install validation tools
+        run: python -m pip install esphome==2026.10.0 pytest
+      - name: Reference regression tests
+        run: python -m pytest -q tests/test_mvs_algorithm.py
+      - name: Execute C++ learning tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/stubs -Icomponents/esp_wifi_sensing tests/test_learning.cpp components/esp_wifi_sensing/mvs_algorithm.cpp components/esp_wifi_sensing/experimental_mvs_algorithm.cpp -o /tmp/test_learning
+          /tmp/test_learning
+      - name: Validate YAML and compile ESP32 firmware
+        run: |
+          python -c "from pathlib import Path; Path('examples/secrets.yaml').write_text('wifi_ssid: build-only\nwifi_password: build-only-password\n')"
+          esphome config examples/mvs_three_branches.yaml
+          esphome compile examples/mvs_three_branches.yaml
