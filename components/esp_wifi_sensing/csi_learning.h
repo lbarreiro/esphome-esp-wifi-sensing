@@ -152,19 +152,33 @@ class CsiLearning {
 
     float mean_noise = 0;
     for (float q : quiet_) mean_noise += q / kBins;
+    float silence[kBins], response[kBins];
+    float mean_silence = 0, mean_response = 0, mean_recurrence = 0;
     for (size_t i = 0; i < kBins; ++i) {
-      const float silence = mean_noise / std::max(mean_noise + quiet_[i], 0.0001f);
-      const float response = std::min(1.0f, movement_[i] / 10.0f);
-      candidates_[i] = std::max(0.75f, std::min(1.50f,
-          0.75f + 0.15f * silence + 0.30f * response + 0.30f * recurrence_[i]));
+      silence[i] = mean_noise / std::max(mean_noise + quiet_[i], 0.0001f);
+      response[i] = std::min(1.0f, movement_[i] / 10.0f);
+      mean_silence += silence[i] / kBins;
+      mean_response += response[i] / kBins;
+      mean_recurrence += recurrence_[i] / kBins;
+    }
+    for (size_t i = 0; i < kBins; ++i) {
+      // Reward discriminative bins, not a global rise shared by all 48.
+      // All bins remain active; silence is a quality signal, not a separate
+      // "quiet detector". Centering keeps uniform responses near weight 1.
+      const float relative_response = response[i] - mean_response;
+      const float relative_recurrence = recurrence_[i] - mean_recurrence;
+      const float relative_silence = silence[i] - mean_silence;
+      candidates_[i] = std::max(0.70f, std::min(2.00f,
+          1.00f + 0.60f * relative_response + 0.60f * relative_recurrence +
+          0.20f * relative_silence));
     }
     // New independent evidence is required for EVERY revision; elapsed time
     // alone never repeats a previous vote and never drives weights to a limit.
     if (episodes_ - applied_episodes_ < 3 || quiet_blocks_ - applied_quiet_ < 6 ||
         static_cast<uint32_t>(now - last_apply_ms_) < 300000) return false;
     for (size_t i = 0; i < kBins; ++i) {
-      weights_[i] += std::max(-0.05f, std::min(0.05f, candidates_[i] - weights_[i]));
-      weights_[i] = std::max(0.75f, std::min(1.50f, weights_[i]));
+      weights_[i] += std::max(-0.10f, std::min(0.10f, candidates_[i] - weights_[i]));
+      weights_[i] = std::max(0.70f, std::min(2.00f, weights_[i]));
     }
     applied_episodes_ = episodes_;
     applied_quiet_ = quiet_blocks_;
