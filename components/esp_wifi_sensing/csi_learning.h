@@ -210,15 +210,17 @@ class CsiLearning {
       float target = 1.0f;
       if (hits >= 3) {
         ++recurrent_bins_;
+        ever_promoted_[i] = true;
         // Absolute evidence matters: numerous genuinely good bins can ALL
         // earn high weights. Normalization in temporal_jitter_ preserves the
         // global score if every bin receives the same weight.
         const float repeatability = static_cast<float>(hits) / kEpisodeWindow;
         const float contrast = static_cast<float>(strength_sum) / (255.0f * hits);
         target += repeatability * (0.35f + 0.65f * contrast);
-      } else if (hits == 0) {
-        // Repeatedly absent during validated movement: downweight, but
-        // never discard. It may return as soon as new evidence arrives.
+      } else if (hits == 0 && !ever_promoted_[i]) {
+        // Persistently nonresponsive bins can be downweighted to 0.70,
+        // never discarded. Formerly useful bins instead decay toward 1.00
+        // when their old positive evidence leaves the rolling window.
         target = 0.70f;
       }
       candidates_[i] = std::max(0.70f, std::min(2.00f, target));
@@ -238,6 +240,7 @@ class CsiLearning {
   float quiet_sum_[kBins]{}, episode_sum_[kBins]{};
   // 8 episodes x 48 one-byte movement contrast votes: no flash writes.
   uint8_t response_history_[kEpisodeWindow][kBins]{}, hit_counts_[kBins]{};
+  bool ever_promoted_[kBins]{};
   size_t history_next_{0}, history_count_{0};
   uint32_t recurrent_bins_{0}, promoted_bins_{0}, strong_bins_{0}, weak_bins_{0};
   uint32_t last_episode_over10x_{0}, last_episode_over256x_{0};
