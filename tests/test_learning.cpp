@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <limits>
 #include "csi_learning.h"
+#include "csi_timestamp.h"
 #include "experimental_mvs_algorithm.h"
 
 using namespace esphome::esp_wifi_sensing;
@@ -10,6 +11,18 @@ using namespace esphome::esp_wifi_sensing;
 static void step(CsiLearning &l, uint32_t &now, float value, bool confirm=false, bool held=false) {
   float e[48];
   for (size_t i=0;i<48;++i) e[i] = i<24 ? value : 0.000001f;
+  now += 100;
+  l.observe(e, now, confirm, held);
+}
+static void all_step(CsiLearning &l, uint32_t &now, float value, bool confirm=false, bool held=false) {
+  float e[48];
+  for (size_t i=0;i<48;++i) e[i] = value;
+  now += 100;
+  l.observe(e, now, confirm, held);
+}
+static void sparse_step(CsiLearning &l, uint32_t &now, float value, bool confirm=false, bool held=false) {
+  float e[48];
+  for (size_t i=0;i<48;++i) e[i] = i<6 ? value : 0.000001f;
   now += 100;
   l.observe(e, now, confirm, held);
 }
@@ -38,7 +51,7 @@ int main() {
   float saved[48];
   for(size_t i=0;i<48;++i) {
     saved[i]=l.weights()[i];
-    assert(saved[i]>=0.75f && saved[i]<=1.50f && std::fabs(saved[i]-1)<=0.05001f);
+    assert(saved[i]>=0.70f && saved[i]<=2.00f && std::fabs(saved[i]-1)<=0.10001f);
   }
   assert(saved[0]>saved[47]);
   assert(std::isfinite(l.quiet_jitter()) && l.quiet_jitter()>=0.01f);
@@ -48,7 +61,7 @@ int main() {
 
   for(unsigned batch=0;batch<20;++batch) {
     episode(l,now); episode(l,now); episode(l,now); quiet(l,now,3100);
-    for(size_t i=0;i<48;++i) assert(l.weights()[i]>=0.75f && l.weights()[i]<=1.50f);
+    for(size_t i=0;i<48;++i) assert(l.weights()[i]>=0.70f && l.weights()[i]<=2.00f);
   }
   const auto count=l.episodes();
   for(unsigned i=0;i<10;++i) step(l,now,0.02f,true,true);
@@ -56,6 +69,41 @@ int main() {
   assert(l.episodes()==count);
   float invalid[48]{}; invalid[0]=std::numeric_limits<float>::quiet_NaN();
   assert(!l.observe(invalid,now,false,false));
+
+  // A response common to all bins must not inflate all weights together.
+  CsiLearning uniform; uint32_t uniform_now=0;
+  for (unsigned i=0;i<3200;++i) all_step(uniform,uniform_now,0.000001f);
+  for (unsigned n=0;n<3;++n) {
+    for (unsigned i=0;i<15;++i) all_step(uniform,uniform_now,0.02f,i==5,true);
+    for (unsigned i=0;i<25;++i) all_step(uniform,uniform_now,0.000001f,false,true);
+  }
+  for (unsigned i=0;i<400;++i) all_step(uniform,uniform_now,0.000001f);
+  assert(uniform.revisions()==1);
+  for (size_t i=0;i<48;++i) {
+    assert(std::fabs(uniform.candidate(i)-1.0f)<0.0001f);
+    assert(std::fabs(uniform.weights()[i]-1.0f)<0.0001f);
+  }
+
+  // Six consistently responsive bins can reach 2.00, while all 48 remain active.
+  CsiLearning sparse; uint32_t sparse_now=0;
+  for (unsigned i=0;i<3200;++i) sparse_step(sparse,sparse_now,0.000001f);
+  for (unsigned n=0;n<3;++n) {
+    for (unsigned i=0;i<15;++i) sparse_step(sparse,sparse_now,0.02f,i==5,true);
+    for (unsigned i=0;i<25;++i) sparse_step(sparse,sparse_now,0.000001f,false,true);
+  }
+  for (unsigned i=0;i<400;++i) sparse_step(sparse,sparse_now,0.000001f);
+  assert(sparse.revisions()==1);
+  assert(sparse.candidate(0)>=1.9999f);
+  assert(sparse.candidate(47)<1.0f);
+  assert(std::fabs(sparse.weights()[0]-1.10f)<0.0001f);
+  assert(std::fabs(sparse.weights()[47]-0.90f)<0.0001f);
+
+  // CSI callback timestamps can be slightly ahead of the ESPHome loop, but
+  // genuine packet age and uint32 millis() rollover must still work.
+  assert(csi_elapsed_or_zero(1000U, 1001U)==0U);
+  assert(csi_elapsed_or_zero(1000U, 999U)==1U);
+  assert(csi_elapsed_or_zero(6001U, 1000U)==5001U);
+  assert(csi_elapsed_or_zero(10U, UINT32_MAX-9U)==20U);
 
   // A stationary but high-noise room must bootstrap without a fixed gate.
   CsiLearning noisy; uint32_t noisy_now=0;
