@@ -19,6 +19,7 @@ class CsiLearning {
   const float *weights() const { return weights_; }
   float candidate(size_t i) const { return candidates_[i]; }
   uint32_t quiet_blocks() const { return quiet_blocks_; }
+  uint32_t discarded_blocks() const { return discarded_blocks_; }
   uint32_t episodes() const { return episodes_; }
   uint32_t rejected() const { return rejected_; }
   uint32_t revisions() const { return revisions_; }
@@ -37,6 +38,7 @@ class CsiLearning {
     episode_ = false;
     quiet_count_ = 0;
     quiet_started_ = false;
+    quiet_count_ = quiet_good_ = 0;
     for (size_t i = 0; i < kBins; ++i) quiet_sum_[i] = 0;
   }
 
@@ -53,8 +55,15 @@ class CsiLearning {
     // Independent raw gate: weighted score / held ON alone cannot label motion.
     const bool raw_motion = ready() && responsive >= 6 &&
         total > std::max(floor * 9.0f, 0.0192f);
-    const bool raw_quiet = !ready() ? total < 0.0192f :
-        total <= std::max(floor * 2.0f, 0.0048f);
+    // Bootstrap from a low-energy envelope rather than an absolute RF level.
+    // A room may be motionless but noisier than the old 0.0192 fixed gate.
+    if (!envelope_started_) { quiet_envelope_ = total; envelope_started_ = true; }
+    if (!ready()) {
+      if (total < quiet_envelope_) quiet_envelope_ = total;
+      else quiet_envelope_ += 0.0005f * (total - quiet_envelope_);
+    }
+    const bool raw_quiet = !ready() ? total <= std::max(quiet_envelope_ * 2.5f, 0.0001f) :
+        total <= std::max(floor * 2.5f, 0.0048f);
 
     if (raw_motion) {
       if (!episode_) {
@@ -72,6 +81,12 @@ class CsiLearning {
     }
     if (episode_) {
       confirmed_ |= confirmed;
+      if (static_cast<uint32_t>(now - start_ms_) > 30000U) {
+        ++rejected_;
+        episode_ = false;
+        reset_quiet_block_();
+        return false;
+      }
       if (raw_quiet && static_cast<uint32_t>(now - last_peak_ms_) >= 2000) {
         // One vote per episode, regardless of packet count or hold duration.
         if (confirmed_ && episode_count_ >= 5 &&
@@ -94,15 +109,24 @@ class CsiLearning {
       return false;
     }
 
-    // Ambiguous observations and the experimental hold cannot teach silence.
-    if (!raw_quiet || held) { reset_quiet_block_(); return false; }
+    // Held motion cannot teach quiet. Tolerate isolated RF bursts within a
+    // 5-second block, but never include those bursts in its quiet estimate.
+    if (held) { reset_quiet_block_(); return false; }
     if (!quiet_started_) { quiet_started_ = true; quiet_start_ms_ = now; }
     ++quiet_count_;
-    for (size_t i = 0; i < kBins; ++i) quiet_sum_[i] += energy[i];
+    if (raw_quiet) {
+      ++quiet_good_;
+      for (size_t i = 0; i < kBins; ++i) quiet_sum_[i] += energy[i];
+    }
     if (static_cast<uint32_t>(now - quiet_start_ms_) < 5000 || quiet_count_ < 20) return false;
+    if (quiet_good_ < 20 || quiet_good_ * 5 < quiet_count_ * 4) {
+      ++discarded_blocks_;
+      reset_quiet_block_();
+      return false;
+    }
     ++quiet_blocks_;
     for (size_t i = 0; i < kBins; ++i) {
-      const float sample = quiet_sum_[i] / quiet_count_;
+      const float sample = quiet_sum_[i] / quiet_good_;
       quiet_[i] += (sample - quiet_[i]) / std::min<uint32_t>(quiet_blocks_, 24U);
     }
     reset_quiet_block_();
@@ -134,14 +158,16 @@ class CsiLearning {
  private:
   void reset_quiet_block_() {
     quiet_started_ = false;
-    quiet_count_ = 0;
+    quiet_count_ = quiet_good_ = 0;
     for (float &v : quiet_sum_) v = 0;
   }
   float weights_[kBins]{}, candidates_[kBins]{}, quiet_[kBins]{};
   float quiet_sum_[kBins]{}, episode_sum_[kBins]{}, movement_[kBins]{}, recurrence_[kBins]{};
-  uint32_t quiet_blocks_{0}, episodes_{0}, rejected_{0}, revisions_{0};
+  uint32_t quiet_blocks_{0}, episodes_{0}, rejected_{0}, revisions_{0}, discarded_blocks_{0};
+  float quiet_envelope_{0};
+  bool envelope_started_{false};
   uint32_t applied_episodes_{0}, applied_quiet_{0}, last_apply_ms_{0};
-  uint32_t quiet_count_{0}, quiet_start_ms_{0}, episode_count_{0}, start_ms_{0}, last_peak_ms_{0};
+  uint32_t quiet_count_{0}, quiet_good_{0}, quiet_start_ms_{0}, episode_count_{0}, start_ms_{0}, last_peak_ms_{0};
   bool quiet_started_{false}, episode_{false}, confirmed_{false};
 };
 
