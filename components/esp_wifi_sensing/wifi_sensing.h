@@ -161,6 +161,12 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> learn_discarded_{0}, learn_hold_resets_{0}, learn_gaps_{0};
   std::atomic<uint32_t> learn_good_{0}, learn_count_{0}, learn_observations_{0};
   std::atomic<float> learn_energy_{0}, learn_limit_{0}, learn_score_{0};
+  // Compact learner diagnostics, snapshotted by CSI callback (never read
+  // learner-owned arrays directly from the ESPHome loop).
+  std::atomic<uint32_t> learn_window_{0}, learn_recurrent_{0}, learn_promoted_{0};
+  std::atomic<uint32_t> learn_strong_{0}, learn_weak_{0};
+  std::atomic<uint32_t> learn_last_over10x_{0}, learn_last_over256x_{0};
+  std::atomic<float> learn_mean_candidate_{1.0f};
   std::atomic<bool> learn_raw_quiet_{false}, learn_held_{false};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
