@@ -26,6 +26,24 @@ static void sparse_step(CsiLearning &l, uint32_t &now, float value, bool confirm
   now += 100;
   l.observe(e, now, confirm, held);
 }
+static void varied_step(CsiLearning &l, uint32_t &now, unsigned ep,
+                        bool moving, bool confirm=false) {
+  float e[48];
+  for (size_t i=0;i<48;++i) e[i]=0.000001f;
+  if (moving) {
+    for (size_t i=0;i<6;++i) e[i]=0.02f;
+    if (ep<3) e[6]=0.02f;  // three independent episode hits
+    if (ep<2) e[7]=0.02f;  // two hits must not qualify
+    e[8]=0.02f;           // strong contrast on all eight episodes
+    e[9]=0.004f;          // weaker contrast at the same recurrence
+  }
+  now+=100;
+  l.observe(e,now,confirm,moving);
+}
+static void varied_episode(CsiLearning &l, uint32_t &now, unsigned ep) {
+  for (unsigned i=0;i<15;++i) varied_step(l,now,ep,true,i==5);
+  for (unsigned i=0;i<25;++i) varied_step(l,now,ep,false);
+}
 static void quiet(CsiLearning &l, uint32_t &now, unsigned samples=400) {
   for(unsigned i=0;i<samples;++i) step(l,now,0.000001f);
 }
@@ -46,6 +64,10 @@ int main() {
   assert(l.episodes()==3 && l.revisions()==0);
   for(unsigned i=0;i<400;++i) step(l,now,0.000001f,false,true);
   assert(l.revisions()==0); // never revise during the held ON period
+  quiet(l,now);
+  assert(l.revisions()==0); // no promotion until eight confirmed episodes
+  for (unsigned i=0;i<5;++i) episode(l,now);
+  assert(l.episode_window_count()==8 && l.revisions()==0);
   quiet(l,now);
   assert(l.revisions()==1);
   float saved[48];
@@ -73,27 +95,30 @@ int main() {
   // A response common to all bins must not inflate all weights together.
   CsiLearning uniform; uint32_t uniform_now=0;
   for (unsigned i=0;i<3200;++i) all_step(uniform,uniform_now,0.000001f);
-  for (unsigned n=0;n<3;++n) {
+  for (unsigned n=0;n<8;++n) {
     for (unsigned i=0;i<15;++i) all_step(uniform,uniform_now,0.02f,i==5,true);
     for (unsigned i=0;i<25;++i) all_step(uniform,uniform_now,0.000001f,false,true);
   }
   for (unsigned i=0;i<400;++i) all_step(uniform,uniform_now,0.000001f);
   assert(uniform.revisions()==1);
+  // Uniform movement evidence gives uniform weighting, not a false ranking.
+  // Weighted temporal jitter normalizes by the sum, so a common scalar does
+  // not change the actual MVS-3 score.
   for (size_t i=0;i<48;++i) {
-    assert(std::fabs(uniform.candidate(i)-1.0f)<0.0001f);
-    assert(std::fabs(uniform.weights()[i]-1.0f)<0.0001f);
+    assert(std::fabs(uniform.candidate(i)-uniform.candidate(0))<0.0001f);
+    assert(std::fabs(uniform.weights()[i]-uniform.weights()[0])<0.0001f);
   }
 
   // Six consistently responsive bins can reach 2.00, while all 48 remain active.
   CsiLearning sparse; uint32_t sparse_now=0;
   for (unsigned i=0;i<3200;++i) sparse_step(sparse,sparse_now,0.000001f);
-  for (unsigned n=0;n<3;++n) {
+  for (unsigned n=0;n<8;++n) {
     for (unsigned i=0;i<15;++i) sparse_step(sparse,sparse_now,0.02f,i==5,true);
     for (unsigned i=0;i<25;++i) sparse_step(sparse,sparse_now,0.000001f,false,true);
   }
   for (unsigned i=0;i<400;++i) sparse_step(sparse,sparse_now,0.000001f);
   assert(sparse.revisions()==1);
-  assert(sparse.candidate(0)>=1.9999f);
+  assert(sparse.candidate(0)>1.90f);
   assert(sparse.candidate(47)<1.0f);
   assert(std::fabs(sparse.weights()[0]-1.10f)<0.0001f);
   assert(std::fabs(sparse.weights()[47]-0.90f)<0.0001f);
@@ -108,11 +133,35 @@ int main() {
   const uint32_t initial_quiet=sparse.quiet_blocks();
   for (unsigned i=0;i<1600;++i) sparse_step(sparse,sparse_now,0.0002f);
   assert(sparse.quiet_blocks()>initial_quiet);
-  assert(sparse.episodes()==3 && sparse.revisions()==1);
+  assert(sparse.episodes()==8 && sparse.revisions()==1);
   for (size_t i=0;i<48;++i) {
     assert(sparse.candidate(i)==ranked_candidates[i]);
     assert(sparse.weights()[i]==ranked_weights[i]);
   }
+
+  // One vote per confirmed episode, with three of the last eight required.
+  // Recurrence AND motion/quiet contrast matter independently.
+  CsiLearning varied; uint32_t varied_now=0;
+  for (unsigned i=0;i<3200;++i) all_step(varied,varied_now,0.000001f);
+  for (unsigned ep=0;ep<8;++ep) varied_episode(varied,varied_now,ep);
+  assert(varied.episode_window_count()==8 && varied.episodes()==8);
+  assert(varied.hits(6)==3 && varied.hits(7)==2);
+  assert(varied.hits(8)==8 && varied.hits(9)==8);
+  assert(varied.candidate(6)>1.0f);
+  assert(std::fabs(varied.candidate(7)-1.0f)<0.0001f);
+  assert(varied.candidate(8)>varied.candidate(9));
+  assert(varied.candidate(8)>1.90f);
+  assert(varied.candidate(47)==0.70f);
+  quiet(varied,varied_now);
+  assert(varied.revisions()==1);
+  assert(varied.weights()[8]<=1.10001f && varied.weights()[8]>=1.09999f);
+  // Rolling out former hits causes a previously useful bin to return
+  // toward neutral, rather than being permanently rewarded or discarded.
+  for (unsigned ep=8;ep<16;++ep) varied_episode(varied,varied_now,ep);
+  assert(varied.hits(6)==0 && varied.hits(7)==0);
+  assert(std::fabs(varied.candidate(6)-1.0f)<0.0001f);
+  assert(std::fabs(varied.candidate(7)-0.70f)<0.0001f);
+  assert(varied.hits(8)==8);
 
   // CSI callback timestamps can be slightly ahead of the ESPHome loop, but
   // genuine packet age and uint32 millis() rollover must still work.
@@ -167,8 +216,8 @@ int main() {
 
   ExperimentalMvsAlgorithm adaptive;
   bool revised=false;
-  for(uint32_t t=0;t<6000;++t) {
-    const bool moving=(t>=400 && t<450) || (t>=2000 && t<2050) || (t>=3600 && t<3650);
+  for(uint32_t t=0;t<12400;++t) {
+    const bool moving=(t%1600 >= 400 && t%1600 < 450);
     for(size_t i=0;i<48;++i) packet.subcarriers[i].amplitude =
       std::expm1(2.0f + 0.05f*std::sin(float(i)) +
         (moving ? 0.5f*std::sin(i*0.55f+t*0.37f) : 0.0f));
@@ -179,7 +228,7 @@ int main() {
       assert(std::isfinite(e.score));
     }
   }
-  assert(revised && adaptive.learning().episodes()==3);
+  assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
   std::puts("C++ learning/weights/episodes/gaps/rollover and neutral MVS equivalence: PASS");
 }
