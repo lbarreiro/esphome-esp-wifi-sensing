@@ -72,6 +72,17 @@ int main() {
   for (unsigned i=0; i<200; ++i) step(bursty,burst_now,0.02f);
   assert(bursty.quiet_blocks()==before_bursts);
 
+  // Reproduce noisy stationary CSI: 25-50% of observations fall below
+  // the obsolete minimum-envelope threshold, with no motion/hold/gaps.
+  CsiLearning realistic; uint32_t realistic_now=0;
+  for (unsigned i=0; i<1200; ++i) {
+    const float e = (i%11==0 ? 0.12f : (i%5==0 ? 0.055f :
+        (i%3==0 ? 0.032f : 0.020f))) / 24.0f;
+    step(realistic, realistic_now, e);
+  }
+  assert(realistic.ready() && realistic.quiet_blocks()>=6);
+  assert(realistic.hold_resets()==0 && realistic.discontinuities()==0);
+
   // Unsigned elapsed time works across millis() rollover.
   CsiLearning wrap; uint32_t clock=UINT32_MAX-20000;
   quiet(wrap,clock,400); assert(wrap.ready());
