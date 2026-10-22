@@ -216,7 +216,7 @@ int main() {
 
   ExperimentalMvsAlgorithm adaptive;
   bool revised=false;
-  for(uint32_t t=0;t<12400;++t) {
+  for(uint32_t t=0;t<13200;++t) {
     const bool moving=(t%1600 >= 400 && t%1600 < 450);
     for(size_t i=0;i<48;++i) packet.subcarriers[i].amplitude =
       std::expm1(2.0f + 0.05f*std::sin(float(i)) +
@@ -228,9 +228,6 @@ int main() {
       assert(std::isfinite(e.score));
     }
   }
-  std::fprintf(stderr, "adaptive: episodes=%u revisions=%u quiet=%u rejected=%u revised=%d\\n",
-               adaptive.learning().episodes(), adaptive.learning().revisions(),
-               adaptive.learning().quiet_blocks(), adaptive.learning().rejected(), revised);
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
   std::puts("C++ learning/weights/episodes/gaps/rollover and neutral MVS equivalence: PASS");
