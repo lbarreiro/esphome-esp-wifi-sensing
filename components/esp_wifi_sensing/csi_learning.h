@@ -150,27 +150,24 @@ class CsiLearning {
     reset_quiet_block_();
     if (!ready() || episodes_ < 3) return false;
 
-    float mean_noise = 0;
-    for (float q : quiet_) mean_noise += q / kBins;
-    float silence[kBins], response[kBins];
-    float mean_silence = 0, mean_response = 0, mean_recurrence = 0;
+    // Only movement evidence ranks bins. Quiet still establishes the
+    // per-bin energy baseline used when each confirmed episode is scored,
+    // but further quiet blocks cannot erode earned movement candidates.
+    float response[kBins];
+    float mean_response = 0, mean_recurrence = 0;
     for (size_t i = 0; i < kBins; ++i) {
-      silence[i] = mean_noise / std::max(mean_noise + quiet_[i], 0.0001f);
       response[i] = std::min(1.0f, movement_[i] / 10.0f);
-      mean_silence += silence[i] / kBins;
       mean_response += response[i] / kBins;
       mean_recurrence += recurrence_[i] / kBins;
     }
     for (size_t i = 0; i < kBins; ++i) {
-      // Reward discriminative bins, not a global rise shared by all 48.
-      // All bins remain active; silence is a quality signal, not a separate
-      // "quiet detector". Centering keeps uniform responses near weight 1.
+      // Stronger emphasis on repeated movement responses than before.
+      // Center each signal across all 48 bins: global RF changes cannot
+      // promote every bin simply because they all reacted together.
       const float relative_response = response[i] - mean_response;
       const float relative_recurrence = recurrence_[i] - mean_recurrence;
-      const float relative_silence = silence[i] - mean_silence;
       candidates_[i] = std::max(0.70f, std::min(2.00f,
-          1.00f + 0.60f * relative_response + 0.60f * relative_recurrence +
-          0.20f * relative_silence));
+          1.00f + 1.20f * relative_response + 1.20f * relative_recurrence));
     }
     // New independent evidence is required for EVERY revision; elapsed time
     // alone never repeats a previous vote and never drives weights to a limit.
