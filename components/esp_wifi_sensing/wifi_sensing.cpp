@@ -183,10 +183,15 @@ void ESPWiFiSensing::loop() {
       const bool seen_3 = mvs_3_confirmation_seen_.load(std::memory_order_acquire);
       const uint32_t last_3 = mvs_3_last_confirmation_ms_.load(std::memory_order_relaxed);
       const bool active_3 = seen_3 && static_cast<uint32_t>(now - last_3) < motion_hold_time_ms_;
-      if (!mvs_3_initial_state_published_ || active_3 != mvs_3_published_state_) {
-        motion_3_binary_sensor_->publish_state(active_3);
-        mvs_3_published_state_ = active_3;
+      if (!mvs_3_initial_state_published_) {
+        motion_3_binary_sensor_->publish_state(false);
         mvs_3_initial_state_published_ = true;
+      }
+      if (active_3 != mvs_3_published_state_) {
+        mvs_3_published_state_ = active_3;
+        ESP_LOGI(TAG, "MVS3 motion %s (hold=%u ms)", active_3 ? "ON" : "OFF",
+                 static_cast<unsigned>(motion_hold_time_ms_));
+        motion_3_binary_sensor_->publish_state(active_3);
       }
       if (static_cast<uint32_t>(now - learn_last_log_ms_) >= 60000U) {
         learn_last_log_ms_ = now;
