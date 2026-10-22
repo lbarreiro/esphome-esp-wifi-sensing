@@ -1,4 +1,5 @@
 #include "wifi_sensing.h"
+#include "csi_timestamp.h"
 
 #include <cstdlib>
 
@@ -249,9 +250,11 @@ void ESPWiFiSensing::loop() {
     const uint32_t last_accepted = this->mvs_last_accepted_ms_.load(std::memory_order_relaxed);
     const uint32_t last_observation = this->mvs_last_observation_ms_.load(std::memory_order_relaxed);
     if (this->mvs_diagnostic_started_ms_ == 0) this->mvs_diagnostic_started_ms_ = now;
-    const uint32_t packet_age = now - (last_packet ? last_packet : this->mvs_diagnostic_started_ms_);
-    const uint32_t accepted_age = now - (last_accepted ? last_accepted : this->mvs_diagnostic_started_ms_);
-    const uint32_t observation_age = now - (last_observation ? last_observation : this->mvs_diagnostic_started_ms_);
+    // The CSI callback may record a timestamp just after this loop's 'now'.
+    // Clamp that cross-task skew instead of reporting ~2^32 ms of CSI loss.
+    const uint32_t packet_age = csi_elapsed_or_zero(now, last_packet ? last_packet : this->mvs_diagnostic_started_ms_);
+    const uint32_t accepted_age = csi_elapsed_or_zero(now, last_accepted ? last_accepted : this->mvs_diagnostic_started_ms_);
+    const uint32_t observation_age = csi_elapsed_or_zero(now, last_observation ? last_observation : this->mvs_diagnostic_started_ms_);
     if (observation_age > 5000U && static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
       if (packet_age > 5000U) {
         ESP_LOGW(TAG, "MVS CSI stalled: no CSI packets for %u ms", static_cast<unsigned>(packet_age));
