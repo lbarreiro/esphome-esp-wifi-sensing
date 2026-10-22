@@ -228,6 +228,9 @@ int main() {
       assert(std::isfinite(e.score));
     }
   }
+  std::fprintf(stderr, "adaptive: episodes=%u revisions=%u quiet=%u rejected=%u revised=%d\\n",
+               adaptive.learning().episodes(), adaptive.learning().revisions(),
+               adaptive.learning().quiet_blocks(), adaptive.learning().rejected(), revised);
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
   std::puts("C++ learning/weights/episodes/gaps/rollover and neutral MVS equivalence: PASS");
