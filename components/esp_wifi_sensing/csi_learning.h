@@ -20,6 +20,13 @@ class CsiLearning {
   float candidate(size_t i) const { return candidates_[i]; }
   uint32_t quiet_blocks() const { return quiet_blocks_; }
   uint32_t discarded_blocks() const { return discarded_blocks_; }
+  uint32_t hold_resets() const { return hold_resets_; }
+  uint32_t discontinuities() const { return discontinuities_; }
+  uint32_t quiet_good() const { return quiet_good_; }
+  uint32_t quiet_count() const { return quiet_count_; }
+  float last_total() const { return last_total_; }
+  float quiet_limit() const { return last_quiet_limit_; }
+  bool last_raw_quiet() const { return last_raw_quiet_; }
   uint32_t episodes() const { return episodes_; }
   uint32_t rejected() const { return rejected_; }
   uint32_t revisions() const { return revisions_; }
@@ -34,6 +41,7 @@ class CsiLearning {
     return std::sqrt(sum / norm + 1.0e-4f);
   }
   void discontinuity() {
+    ++discontinuities_;
     if (episode_) ++rejected_;
     episode_ = false;
     quiet_count_ = 0;
@@ -62,8 +70,10 @@ class CsiLearning {
       if (total < quiet_envelope_) quiet_envelope_ = total;
       else quiet_envelope_ += 0.0005f * (total - quiet_envelope_);
     }
-    const bool raw_quiet = !ready() ? total <= std::max(quiet_envelope_ * 2.5f, 0.0001f) :
-        total <= std::max(floor * 2.5f, 0.0048f);
+    last_total_ = total;
+    last_quiet_limit_ = !ready() ? std::max(quiet_envelope_ * 2.5f, 0.0001f) : std::max(floor * 2.5f, 0.0048f);
+    const bool raw_quiet = total <= last_quiet_limit_;
+    last_raw_quiet_ = raw_quiet;
 
     if (raw_motion) {
       if (!episode_) {
@@ -111,7 +121,7 @@ class CsiLearning {
 
     // Held motion cannot teach quiet. Tolerate isolated RF bursts within a
     // 5-second block, but never include those bursts in its quiet estimate.
-    if (held) { reset_quiet_block_(); return false; }
+    if (held) { ++hold_resets_; reset_quiet_block_(); return false; }
     if (!quiet_started_) { quiet_started_ = true; quiet_start_ms_ = now; }
     ++quiet_count_;
     if (raw_quiet) {
@@ -164,6 +174,9 @@ class CsiLearning {
   float weights_[kBins]{}, candidates_[kBins]{}, quiet_[kBins]{};
   float quiet_sum_[kBins]{}, episode_sum_[kBins]{}, movement_[kBins]{}, recurrence_[kBins]{};
   uint32_t quiet_blocks_{0}, episodes_{0}, rejected_{0}, revisions_{0}, discarded_blocks_{0};
+  uint32_t hold_resets_{0}, discontinuities_{0};
+  float last_total_{0}, last_quiet_limit_{0};
+  bool last_raw_quiet_{false};
   float quiet_envelope_{0};
   bool envelope_started_{false};
   uint32_t applied_episodes_{0}, applied_quiet_{0}, last_apply_ms_{0};
