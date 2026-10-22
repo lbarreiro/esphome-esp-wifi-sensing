@@ -195,6 +195,12 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_rejected_.load()), static_cast<unsigned>(learn_revisions_.load()),
           static_cast<unsigned>(learn_best_.load()), learn_best_candidate_.load(), learn_best_weight_.load(),
           static_cast<unsigned>(learn_low_.load()), learn_low_candidate_.load(), learn_low_weight_.load());
+        ESP_LOGI(TAG, "MVS3 diag obs=%u held=%u score=%.3f energy=%.6f limit=%.6f rawquiet=%u good=%u/%u discard=%u holdreset=%u gaps=%u",
+          static_cast<unsigned>(learn_observations_.load()), static_cast<unsigned>(learn_held_.load()),
+          learn_score_.load(), learn_energy_.load(), learn_limit_.load(),
+          static_cast<unsigned>(learn_raw_quiet_.load()), static_cast<unsigned>(learn_good_.load()),
+          static_cast<unsigned>(learn_count_.load()), static_cast<unsigned>(learn_discarded_.load()),
+          static_cast<unsigned>(learn_hold_resets_.load()), static_cast<unsigned>(learn_gaps_.load()));
       }
     }
     // Independent 128-byte comparison output: never affects the 256-byte decision.
@@ -644,6 +650,17 @@ void ESPWiFiSensing::csi_callback_(
         self->learn_episodes_.store(learn.episodes());
         self->learn_rejected_.store(learn.rejected());
         self->learn_revisions_.store(learn.revisions());
+        self->learn_discarded_.store(learn.discarded_blocks());
+        self->learn_hold_resets_.store(learn.hold_resets());
+        self->learn_gaps_.store(learn.discontinuities());
+        self->learn_good_.store(learn.quiet_good());
+        self->learn_count_.store(learn.quiet_count());
+        self->learn_energy_.store(learn.last_total());
+        self->learn_limit_.store(learn.quiet_limit());
+        self->learn_raw_quiet_.store(learn.last_raw_quiet());
+        self->learn_held_.store(self->mvs_3_algorithm_.motion_state());
+        self->learn_score_.store(third.score);
+        self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         size_t hi = 0, lo = 0;
         for (size_t i = 1; i < CsiLearning::kBins; ++i) {
           if (learn.candidate(i) > learn.candidate(hi)) hi = i;
