@@ -13,6 +13,7 @@ namespace esp_wifi_sensing {
 class CsiLearning {
  public:
   static constexpr size_t kBins = 48;
+  static constexpr size_t kEpisodeWindow = 8;
   CsiLearning() {
     for (size_t i = 0; i < kBins; ++i) weights_[i] = candidates_[i] = 1.0f;
   }
@@ -30,6 +31,15 @@ class CsiLearning {
   uint32_t episodes() const { return episodes_; }
   uint32_t rejected() const { return rejected_; }
   uint32_t revisions() const { return revisions_; }
+  size_t episode_window_count() const { return history_count_; }
+  uint32_t recurrent_bins() const { return recurrent_bins_; }
+  uint32_t promoted_bins() const { return promoted_bins_; }
+  uint32_t strong_bins() const { return strong_bins_; }
+  uint32_t weak_bins() const { return weak_bins_; }
+  uint32_t last_episode_over10x() const { return last_episode_over10x_; }
+  uint32_t last_episode_over256x() const { return last_episode_over256x_; }
+  float mean_candidate() const { return mean_candidate_; }
+  uint8_t hits(size_t i) const { return hit_counts_[i]; }
   bool in_episode() const { return episode_; }
   bool ready() const { return quiet_blocks_ >= 6; }
   float quiet_jitter() const {
@@ -111,13 +121,29 @@ class CsiLearning {
             static_cast<uint32_t>(last_peak_ms_ - start_ms_) >= 500 &&
             static_cast<uint32_t>(now - start_ms_) <= 30000) {
           ++episodes_;
+          // One bounded, quantized contrast vote per *confirmed episode*,
+          // never per packet or per second of held motion.
+          last_episode_over10x_ = last_episode_over256x_ = 0;
           for (size_t i = 0; i < kBins; ++i) {
             const float response = episode_sum_[i] / episode_count_;
-            const float ratio = std::min(20.0f, response / std::max(quiet_[i], 0.0001f));
-            movement_[i] += (ratio - movement_[i]) / std::min<uint32_t>(episodes_, 16U);
-            const float hit = ratio >= 4.0f ? 1.0f : 0.0f;
-            recurrence_[i] += (hit - recurrence_[i]) / std::min<uint32_t>(episodes_, 16U);
+            const float ratio = response / std::max(quiet_[i], 0.0001f);
+            if (ratio >= 10.0f) ++last_episode_over10x_;
+            if (ratio >= 256.0f) ++last_episode_over256x_;
+            // Retain contrast differences from 4x through 256x, rather than
+            // treating 10x and 20x as equally strong. 0 = no episode hit.
+            uint8_t vote = 0;
+            if (ratio >= 4.0f) {
+              const float strength = std::log2(std::min(ratio, 256.0f) / 4.0f) / 6.0f;
+              vote = static_cast<uint8_t>(1 + 254.0f * strength);
+            }
+            response_history_[history_next_][i] = vote;
           }
+          history_next_ = (history_next_ + 1) % kEpisodeWindow;
+          if (history_count_ < kEpisodeWindow) ++history_count_;
+          // Candidate weights change only on fresh, validated movement
+          // evidence. A quiet-only period may update the reference for the
+          // NEXT episode, but cannot reshuffle an already learnt ranking.
+          if (history_count_ == kEpisodeWindow) update_candidates_();
         } else {
           ++rejected_;
         }
@@ -148,27 +174,9 @@ class CsiLearning {
       quiet_[i] += (sample - quiet_[i]) / std::min<uint32_t>(quiet_blocks_, 24U);
     }
     reset_quiet_block_();
-    if (!ready() || episodes_ < 3) return false;
-
-    // Only movement evidence ranks bins. Quiet still establishes the
-    // per-bin energy baseline used when each confirmed episode is scored,
-    // but further quiet blocks cannot erode earned movement candidates.
-    float response[kBins];
-    float mean_response = 0, mean_recurrence = 0;
-    for (size_t i = 0; i < kBins; ++i) {
-      response[i] = std::min(1.0f, movement_[i] / 10.0f);
-      mean_response += response[i] / kBins;
-      mean_recurrence += recurrence_[i] / kBins;
-    }
-    for (size_t i = 0; i < kBins; ++i) {
-      // Stronger emphasis on repeated movement responses than before.
-      // Center each signal across all 48 bins: global RF changes cannot
-      // promote every bin simply because they all reacted together.
-      const float relative_response = response[i] - mean_response;
-      const float relative_recurrence = recurrence_[i] - mean_recurrence;
-      candidates_[i] = std::max(0.70f, std::min(2.00f,
-          1.00f + 1.20f * relative_response + 1.20f * relative_recurrence));
-    }
+    // Three distinct hits in a *complete* rolling window of eight confirmed
+    // episodes are required before any positive weighting is possible.
+    if (!ready() || history_count_ < kEpisodeWindow) return false;
     // New independent evidence is required for EVERY revision; elapsed time
     // alone never repeats a previous vote and never drives weights to a limit.
     if (episodes_ - applied_episodes_ < 3 || quiet_blocks_ - applied_quiet_ < 6 ||
@@ -185,13 +193,55 @@ class CsiLearning {
   }
 
  private:
+  void update_candidates_() {
+    recurrent_bins_ = promoted_bins_ = strong_bins_ = weak_bins_ = 0;
+    mean_candidate_ = 0.0f;
+    for (size_t i = 0; i < kBins; ++i) {
+      uint8_t hits = 0;
+      uint32_t strength_sum = 0;
+      for (size_t ep = 0; ep < kEpisodeWindow; ++ep) {
+        const uint8_t vote = response_history_[ep][i];
+        if (vote != 0) {
+          ++hits;
+          strength_sum += vote;
+        }
+      }
+      hit_counts_[i] = hits;
+      float target = 1.0f;
+      if (hits >= 3) {
+        ++recurrent_bins_;
+        // Absolute evidence matters: numerous genuinely good bins can ALL
+        // earn high weights. Normalization in temporal_jitter_ preserves the
+        // global score if every bin receives the same weight.
+        const float repeatability = static_cast<float>(hits) / kEpisodeWindow;
+        const float contrast = static_cast<float>(strength_sum) / (255.0f * hits);
+        target += repeatability * (0.35f + 0.65f * contrast);
+      } else if (hits == 0) {
+        // Repeatedly absent during validated movement: downweight, but
+        // never discard. It may return as soon as new evidence arrives.
+        target = 0.70f;
+      }
+      candidates_[i] = std::max(0.70f, std::min(2.00f, target));
+      if (candidates_[i] > 1.0001f) ++promoted_bins_;
+      if (candidates_[i] >= 1.50f) ++strong_bins_;
+      if (candidates_[i] <= 0.80f) ++weak_bins_;
+      mean_candidate_ += candidates_[i] / kBins;
+    }
+  }
+
   void reset_quiet_block_() {
     quiet_started_ = false;
     quiet_count_ = quiet_good_ = 0;
     for (float &v : quiet_sum_) v = 0;
   }
   float weights_[kBins]{}, candidates_[kBins]{}, quiet_[kBins]{};
-  float quiet_sum_[kBins]{}, episode_sum_[kBins]{}, movement_[kBins]{}, recurrence_[kBins]{};
+  float quiet_sum_[kBins]{}, episode_sum_[kBins]{};
+  // 8 episodes x 48 one-byte movement contrast votes: no flash writes.
+  uint8_t response_history_[kEpisodeWindow][kBins]{}, hit_counts_[kBins]{};
+  size_t history_next_{0}, history_count_{0};
+  uint32_t recurrent_bins_{0}, promoted_bins_{0}, strong_bins_{0}, weak_bins_{0};
+  uint32_t last_episode_over10x_{0}, last_episode_over256x_{0};
+  float mean_candidate_{1.0f};
   uint32_t quiet_blocks_{0}, episodes_{0}, rejected_{0}, revisions_{0}, discarded_blocks_{0};
   uint32_t hold_resets_{0}, discontinuities_{0};
   float last_total_{0}, last_quiet_limit_{0};
