@@ -63,15 +63,23 @@ class CsiLearning {
     // Independent raw gate: weighted score / held ON alone cannot label motion.
     const bool raw_motion = ready() && responsive >= 6 &&
         total > std::max(floor * 9.0f, 0.0192f);
-    // Bootstrap from a low-energy envelope rather than an absolute RF level.
-    // A room may be motionless but noisier than the old 0.0192 fixed gate.
-    if (!envelope_started_) { quiet_envelope_ = total; envelope_started_ = true; }
-    if (!ready()) {
-      if (total < quiet_envelope_) quiet_envelope_ = total;
-      else quiet_envelope_ += 0.0005f * (total - quiet_envelope_);
+    // Robust rolling upper quartile: the old minimum envelope rejected nearly
+    // every real-world quiet block despite no confirmed motion or CSI gaps.
+    // Only update the bootstrap distribution while not held/confirmed.
+    if (!held && !confirmed && !episode_) {
+      quiet_history_[quiet_history_next_] = total;
+      quiet_history_next_ = (quiet_history_next_ + 1) % kQuietHistory;
+      if (quiet_history_count_ < kQuietHistory) ++quiet_history_count_;
+    }
+    float quiet_reference = total;
+    if (quiet_history_count_ >= 20) {
+      float sorted[kQuietHistory];
+      for (size_t i = 0; i < quiet_history_count_; ++i) sorted[i] = quiet_history_[i];
+      std::sort(sorted, sorted + quiet_history_count_);
+      quiet_reference = sorted[(quiet_history_count_ - 1) * 3 / 4];
     }
     last_total_ = total;
-    last_quiet_limit_ = !ready() ? std::max(quiet_envelope_ * 2.5f, 0.0001f) : std::max(floor * 2.5f, 0.0048f);
+    last_quiet_limit_ = !ready() ? std::max(quiet_reference * 1.35f, 0.0001f) : std::max(floor * 2.5f, 0.0048f);
     const bool raw_quiet = total <= last_quiet_limit_;
     last_raw_quiet_ = raw_quiet;
 
@@ -177,8 +185,9 @@ class CsiLearning {
   uint32_t hold_resets_{0}, discontinuities_{0};
   float last_total_{0}, last_quiet_limit_{0};
   bool last_raw_quiet_{false};
-  float quiet_envelope_{0};
-  bool envelope_started_{false};
+  static constexpr size_t kQuietHistory = 64;
+  float quiet_history_[kQuietHistory]{};
+  size_t quiet_history_next_{0}, quiet_history_count_{0};
   uint32_t applied_episodes_{0}, applied_quiet_{0}, last_apply_ms_{0};
   uint32_t quiet_count_{0}, quiet_good_{0}, quiet_start_ms_{0}, episode_count_{0}, start_ms_{0}, last_peak_ms_{0};
   bool quiet_started_{false}, episode_{false}, confirmed_{false};
