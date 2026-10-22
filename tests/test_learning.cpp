@@ -57,6 +57,21 @@ int main() {
   float invalid[48]{}; invalid[0]=std::numeric_limits<float>::quiet_NaN();
   assert(!l.observe(invalid,now,false,false));
 
+  // A stationary but high-noise room must bootstrap without a fixed gate.
+  CsiLearning noisy; uint32_t noisy_now=0;
+  for (unsigned i=0; i<800; ++i) step(noisy,noisy_now,0.0005f);
+  assert(noisy.ready() && noisy.quiet_blocks()>=6);
+  // A single RF spike every four seconds must not erase the whole block.
+  CsiLearning bursty; uint32_t burst_now=0;
+  for (unsigned i=0; i<1200; ++i)
+    step(bursty,burst_now,(i%40==39) ? 0.02f : 0.000001f);
+  assert(bursty.ready() && bursty.quiet_blocks()>=6);
+  // Sustained high-energy ambiguity cannot silently teach the baseline
+  // after a quiet reference has already been established.
+  const uint32_t before_bursts=bursty.quiet_blocks();
+  for (unsigned i=0; i<200; ++i) step(bursty,burst_now,0.02f);
+  assert(bursty.quiet_blocks()==before_bursts);
+
   // Unsigned elapsed time works across millis() rollover.
   CsiLearning wrap; uint32_t clock=UINT32_MAX-20000;
   quiet(wrap,clock,400); assert(wrap.ready());
