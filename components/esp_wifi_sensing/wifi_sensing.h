@@ -158,6 +158,10 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> learn_best_{0}, learn_low_{0};
   std::atomic<float> learn_best_candidate_{1}, learn_best_weight_{1};
   std::atomic<float> learn_low_candidate_{1}, learn_low_weight_{1};
+  std::atomic<uint32_t> learn_discarded_{0}, learn_hold_resets_{0}, learn_gaps_{0};
+  std::atomic<uint32_t> learn_good_{0}, learn_count_{0}, learn_observations_{0};
+  std::atomic<float> learn_energy_{0}, learn_limit_{0}, learn_score_{0};
+  std::atomic<bool> learn_raw_quiet_{false}, learn_held_{false};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
   CsiPipeline pipeline_{};
