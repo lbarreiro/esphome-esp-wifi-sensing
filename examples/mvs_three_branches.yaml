@@ -6,6 +6,8 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    advanced:
+      flash_chip: generic
 
 logger:
   level: INFO
