@@ -98,6 +98,22 @@ int main() {
   assert(std::fabs(sparse.weights()[0]-1.10f)<0.0001f);
   assert(std::fabs(sparse.weights()[47]-0.90f)<0.0001f);
 
+  // Once movement has established the ranking, learning more silence must
+  // not move candidates (or weights) when no further episode is confirmed.
+  float ranked_candidates[48], ranked_weights[48];
+  for (size_t i=0;i<48;++i) {
+    ranked_candidates[i]=sparse.candidate(i);
+    ranked_weights[i]=sparse.weights()[i];
+  }
+  const uint32_t initial_quiet=sparse.quiet_blocks();
+  for (unsigned i=0;i<1600;++i) sparse_step(sparse,sparse_now,0.0002f);
+  assert(sparse.quiet_blocks()>initial_quiet);
+  assert(sparse.episodes()==3 && sparse.revisions()==1);
+  for (size_t i=0;i<48;++i) {
+    assert(sparse.candidate(i)==ranked_candidates[i]);
+    assert(sparse.weights()[i]==ranked_weights[i]);
+  }
+
   // CSI callback timestamps can be slightly ahead of the ESPHome loop, but
   // genuine packet age and uint32 millis() rollover must still work.
   assert(csi_elapsed_or_zero(1000U, 1001U)==0U);
