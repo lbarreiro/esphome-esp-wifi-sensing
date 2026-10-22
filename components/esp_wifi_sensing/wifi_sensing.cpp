@@ -207,6 +207,11 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_raw_quiet_.load()), static_cast<unsigned>(learn_good_.load()),
           static_cast<unsigned>(learn_count_.load()), static_cast<unsigned>(learn_discarded_.load()),
           static_cast<unsigned>(learn_hold_resets_.load()), static_cast<unsigned>(learn_gaps_.load()));
+        ESP_LOGI(TAG, "MVS3 bins win=%u/8 hit3=%u up=%u strong=%u weak=%u mean=%.2f last10x=%u last256x=%u",
+          static_cast<unsigned>(learn_window_.load()), static_cast<unsigned>(learn_recurrent_.load()),
+          static_cast<unsigned>(learn_promoted_.load()), static_cast<unsigned>(learn_strong_.load()),
+          static_cast<unsigned>(learn_weak_.load()), learn_mean_candidate_.load(),
+          static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
       }
     }
     // Independent 128-byte comparison output: never affects the 256-byte decision.
@@ -669,6 +674,14 @@ void ESPWiFiSensing::csi_callback_(
         self->learn_held_.store(self->mvs_3_algorithm_.motion_state());
         self->learn_score_.store(third.score);
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
+        self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
+        self->learn_recurrent_.store(learn.recurrent_bins());
+        self->learn_promoted_.store(learn.promoted_bins());
+        self->learn_strong_.store(learn.strong_bins());
+        self->learn_weak_.store(learn.weak_bins());
+        self->learn_last_over10x_.store(learn.last_episode_over10x());
+        self->learn_last_over256x_.store(learn.last_episode_over256x());
+        self->learn_mean_candidate_.store(learn.mean_candidate());
         size_t hi = 0, lo = 0;
         for (size_t i = 1; i < CsiLearning::kBins; ++i) {
           if (learn.candidate(i) > learn.candidate(hi)) hi = i;
