@@ -32,8 +32,8 @@ static void varied_step(CsiLearning &l, uint32_t &now, unsigned ep,
   for (size_t i=0;i<48;++i) e[i]=0.000001f;
   if (moving) {
     for (size_t i=0;i<6;++i) e[i]=0.02f;
-    if (ep<3) e[6]=0.02f;  // three independent episode hits
-    if (ep<2) e[7]=0.02f;  // two hits must not qualify
+    if (ep<5) e[6]=0.02f;  // five independent episode hits
+    if (ep<4) e[7]=0.02f;  // four hits must not qualify
     e[8]=0.02f;           // strong contrast on all eight episodes
     e[9]=0.004f;          // weaker contrast at the same recurrence
   }
@@ -42,14 +42,14 @@ static void varied_step(CsiLearning &l, uint32_t &now, unsigned ep,
 }
 static void varied_episode(CsiLearning &l, uint32_t &now, unsigned ep) {
   for (unsigned i=0;i<15;++i) varied_step(l,now,ep,true,i==5);
-  for (unsigned i=0;i<25;++i) varied_step(l,now,ep,false);
+  for (unsigned i=0;i<65;++i) varied_step(l,now,ep,false);
 }
 static void quiet(CsiLearning &l, uint32_t &now, unsigned samples=400) {
   for(unsigned i=0;i<samples;++i) step(l,now,0.000001f);
 }
 static void episode(CsiLearning &l,uint32_t &now,bool feedback=true) {
   for(unsigned i=0;i<15;++i) step(l,now,0.02f,feedback && i==5,true);
-  for(unsigned i=0;i<25;++i) step(l,now,0.000001f,false,true);
+  for(unsigned i=0;i<65;++i) step(l,now,0.000001f,false,true);
 }
 int main() {
   CsiLearning l; uint32_t now=0;
@@ -58,6 +58,7 @@ int main() {
   episode(l,now,false); assert(l.episodes()==0 && l.rejected()==1);
   step(l,now,0.02f,true,true); quiet(l,now,30);
   assert(l.episodes()==0); // isolated spike cannot teach a movement episode
+  quiet(l,now,100);  // build a fresh pre-motion baseline after that candidate
   episode(l,now); episode(l,now);
   quiet(l,now); assert(l.revisions()==0);
   episode(l,now);
@@ -97,7 +98,7 @@ int main() {
   for (unsigned i=0;i<3200;++i) all_step(uniform,uniform_now,0.000001f);
   for (unsigned n=0;n<8;++n) {
     for (unsigned i=0;i<15;++i) all_step(uniform,uniform_now,0.02f,i==5,true);
-    for (unsigned i=0;i<25;++i) all_step(uniform,uniform_now,0.000001f,false,true);
+    for (unsigned i=0;i<65;++i) all_step(uniform,uniform_now,0.000001f,false,true);
   }
   for (unsigned i=0;i<400;++i) all_step(uniform,uniform_now,0.000001f);
   assert(uniform.revisions()==1);
@@ -114,7 +115,7 @@ int main() {
   for (unsigned i=0;i<3200;++i) sparse_step(sparse,sparse_now,0.000001f);
   for (unsigned n=0;n<8;++n) {
     for (unsigned i=0;i<15;++i) sparse_step(sparse,sparse_now,0.02f,i==5,true);
-    for (unsigned i=0;i<25;++i) sparse_step(sparse,sparse_now,0.000001f,false,true);
+    for (unsigned i=0;i<65;++i) sparse_step(sparse,sparse_now,0.000001f,false,true);
   }
   for (unsigned i=0;i<400;++i) sparse_step(sparse,sparse_now,0.000001f);
   assert(sparse.revisions()==1);
@@ -139,16 +140,19 @@ int main() {
     assert(sparse.weights()[i]==ranked_weights[i]);
   }
 
-  // One vote per confirmed episode, with three of the last eight required.
+  // One vote per confirmed episode, with five of the last eight required.
   // Recurrence AND motion/quiet contrast matter independently.
   CsiLearning varied; uint32_t varied_now=0;
   for (unsigned i=0;i<3200;++i) all_step(varied,varied_now,0.000001f);
   for (unsigned ep=0;ep<8;++ep) varied_episode(varied,varied_now,ep);
   assert(varied.episode_window_count()==8 && varied.episodes()==8);
-  assert(varied.hits(6)==3 && varied.hits(7)==2);
+  assert(varied.eligible_episodes()==8 && varied.skipped_episodes()==0);
+  assert(varied.hits(6)==5 && varied.hits(7)==4);
   assert(varied.hits(8)==8 && varied.hits(9)==8);
   assert(varied.candidate(6)>1.0f);
   assert(std::fabs(varied.candidate(7)-1.0f)<0.0001f);
+  assert(varied.recurrent_bins()>=7);
+  assert(varied.promoted_bins()>=7);
   assert(varied.candidate(8)>varied.candidate(9));
   assert(varied.candidate(8)>1.90f);
   assert(varied.candidate(47)==0.70f);
@@ -162,6 +166,33 @@ int main() {
   assert(std::fabs(varied.candidate(6)-1.0f)<0.0001f);
   assert(std::fabs(varied.candidate(7)-0.70f)<0.0001f);
   assert(varied.hits(8)==8);
+
+  // An RF-noisy bin and an isolated spike MUST NOT be credited as motion.
+  // Both are observed alongside genuinely responsive bins in eight episodes.
+  CsiLearning noisy_hits; uint32_t noisy_hits_now=0;
+  for (unsigned i=0;i<3200;++i) all_step(noisy_hits,noisy_hits_now,0.000001f);
+  auto noisy_step = [&](bool moving, unsigned j, bool confirm) {
+    float e[48]{};
+    for (size_t k=0;k<48;++k) e[k]=0.000001f;
+    e[10]=0.001f; // always noisy, already elevated before the movement
+    if (moving) {
+      for (size_t k=0;k<6;++k) e[k]=0.02f;
+      e[11]=j==0 ? 0.02f : 0.000001f; // one spike, never sustained
+      e[12]=0.005f; // valid modest contrast, repeated on every episode
+    }
+    noisy_hits_now+=100;
+    noisy_hits.observe(e,noisy_hits_now,confirm,moving);
+  };
+  for (unsigned n=0;n<25;++n) noisy_step(false,n,false);
+  for (unsigned ep=0;ep<8;++ep) {
+    for (unsigned j=0;j<15;++j) noisy_step(true,j,j==5);
+    for (unsigned j=0;j<65;++j) noisy_step(false,j,false);
+  }
+  assert(noisy_hits.eligible_episodes()==8);
+  assert(noisy_hits.hits(10)==0); // noise was not a quiet -> movement transition
+  assert(noisy_hits.hits(11)==0); // lone spike was rejected
+  assert(noisy_hits.hits(12)==8 && noisy_hits.candidate(12)>1.0f);
+  assert(noisy_hits.last_transition_bins()>=7);
 
   // CSI callback timestamps can be slightly ahead of the ESPHome loop, but
   // genuine packet age and uint32 millis() rollover must still work.
