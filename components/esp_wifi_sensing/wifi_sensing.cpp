@@ -207,11 +207,14 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_raw_quiet_.load()), static_cast<unsigned>(learn_good_.load()),
           static_cast<unsigned>(learn_count_.load()), static_cast<unsigned>(learn_discarded_.load()),
           static_cast<unsigned>(learn_hold_resets_.load()), static_cast<unsigned>(learn_gaps_.load()));
-        ESP_LOGI(TAG, "MVS3 bins win=%u/8 hit3=%u up=%u strong=%u weak=%u mean=%.2f last10x=%u last256x=%u",
+        ESP_LOGI(TAG, "MVS3 bins win=%u/8 hit5=%u up=%u strong=%u weak=%u mean=%.2f last10x=%u last256x=%u",
           static_cast<unsigned>(learn_window_.load()), static_cast<unsigned>(learn_recurrent_.load()),
           static_cast<unsigned>(learn_promoted_.load()), static_cast<unsigned>(learn_strong_.load()),
           static_cast<unsigned>(learn_weak_.load()), learn_mean_candidate_.load(),
           static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
+        ESP_LOGI(TAG, "MVS3 gate eligible=%u skipped=%u prequiet=%u transitions=%u",
+          static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
+          static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()));
       }
     }
     // Independent 128-byte comparison output: never affects the 256-byte decision.
@@ -681,6 +684,10 @@ void ESPWiFiSensing::csi_callback_(
         self->learn_weak_.store(learn.weak_bins());
         self->learn_last_over10x_.store(learn.last_episode_over10x());
         self->learn_last_over256x_.store(learn.last_episode_over256x());
+        self->learn_eligible_episodes_.store(learn.eligible_episodes());
+        self->learn_skipped_episodes_.store(learn.skipped_episodes());
+        self->learn_prequiet_bins_.store(learn.last_prequiet_bins());
+        self->learn_transition_bins_.store(learn.last_transition_bins());
         self->learn_mean_candidate_.store(learn.mean_candidate());
         size_t hi = 0, lo = 0;
         for (size_t i = 1; i < CsiLearning::kBins; ++i) {
