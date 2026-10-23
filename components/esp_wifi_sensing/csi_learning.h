@@ -14,6 +14,8 @@ class CsiLearning {
  public:
   static constexpr size_t kBins = 48;
   static constexpr size_t kEpisodeWindow = 8;
+  static constexpr size_t kMinHits = 5;
+  static constexpr size_t kPreQuietWindow = 8;
   CsiLearning() {
     for (size_t i = 0; i < kBins; ++i) weights_[i] = candidates_[i] = 1.0f;
   }
@@ -36,6 +38,10 @@ class CsiLearning {
   uint32_t promoted_bins() const { return promoted_bins_; }
   uint32_t strong_bins() const { return strong_bins_; }
   uint32_t weak_bins() const { return weak_bins_; }
+  uint32_t eligible_episodes() const { return eligible_episodes_; }
+  uint32_t skipped_episodes() const { return skipped_episodes_; }
+  uint32_t last_prequiet_bins() const { return last_prequiet_bins_; }
+  uint32_t last_transition_bins() const { return last_transition_bins_; }
   uint32_t last_episode_over10x() const { return last_episode_over10x_; }
   uint32_t last_episode_over256x() const { return last_episode_over256x_; }
   float mean_candidate() const { return mean_candidate_; }
@@ -54,6 +60,9 @@ class CsiLearning {
     ++discontinuities_;
     if (episode_) ++rejected_;
     episode_ = false;
+    episode_pre_valid_ = false;
+    pre_count_ = pre_next_ = 0;
+    pre_last_ms_ = 0;
     quiet_count_ = 0;
     quiet_started_ = false;
     quiet_count_ = quiet_good_ = 0;
@@ -99,12 +108,41 @@ class CsiLearning {
         start_ms_ = now;
         episode_count_ = 0;
         confirmed_ = false;
-        for (size_t i = 0; i < kBins; ++i) episode_sum_[i] = 0;
+        episode_pre_valid_ = pre_count_ == kPreQuietWindow &&
+            static_cast<uint32_t>(now - pre_last_ms_) <= 2000U;
+        last_prequiet_bins_ = 0;
+        for (size_t i = 0; i < kBins; ++i) {
+          episode_sum_[i] = 0;
+          episode_above_[i] = 0;
+          float pre_sum = 0, pre_peak = 0;
+          if (episode_pre_valid_) {
+            for (size_t j = 0; j < kPreQuietWindow; ++j) {
+              const float v = pre_energy_[j][i];
+              pre_sum += v;
+              pre_peak = std::max(pre_peak, v);
+            }
+          }
+          episode_pre_mean_[i] = pre_sum / kPreQuietWindow;
+          // A permanently noisy bin was NOT quiet before motion; it cannot
+          // earn a hit just by staying over the movement threshold.
+          const float idle_limit = std::max(quiet_[i] * 3.0f, 0.0002f);
+          episode_prequiet_[i] = episode_pre_valid_ &&
+              pre_peak <= idle_limit && episode_pre_mean_[i] <= idle_limit;
+          if (episode_prequiet_[i]) ++last_prequiet_bins_;
+          episode_threshold_[i] = std::max(
+              std::max(quiet_[i] * 4.0f, episode_pre_mean_[i] * 4.0f), 0.0004f);
+        }
+        // A new transition requires a fresh preceding quiet interval.
+        pre_count_ = pre_next_ = 0;
       }
       last_peak_ms_ = now;
       if (episode_count_ < 100000) {
         ++episode_count_;
-        for (size_t i = 0; i < kBins; ++i) episode_sum_[i] += energy[i];
+        for (size_t i = 0; i < kBins; ++i) {
+          episode_sum_[i] += energy[i];
+          if (episode_prequiet_[i] && energy[i] > episode_threshold_[i])
+            ++episode_above_[i];
+        }
       }
     }
     if (episode_) {
@@ -121,29 +159,45 @@ class CsiLearning {
             static_cast<uint32_t>(last_peak_ms_ - start_ms_) >= 500 &&
             static_cast<uint32_t>(now - start_ms_) <= 30000) {
           ++episodes_;
-          // One bounded, quantized contrast vote per *confirmed episode*,
-          // never per packet or per second of held motion.
-          last_episode_over10x_ = last_episode_over256x_ = 0;
-          for (size_t i = 0; i < kBins; ++i) {
-            const float response = episode_sum_[i] / episode_count_;
-            const float ratio = response / std::max(quiet_[i], 0.0001f);
-            if (ratio >= 10.0f) ++last_episode_over10x_;
-            if (ratio >= 256.0f) ++last_episode_over256x_;
-            // Retain contrast differences from 4x through 256x, rather than
-            // treating 10x and 20x as equally strong. 0 = no episode hit.
-            uint8_t vote = 0;
-            if (ratio >= 4.0f) {
-              const float strength = std::log2(std::min(ratio, 256.0f) / 4.0f) / 6.0f;
-              vote = static_cast<uint8_t>(1 + 254.0f * strength);
+          // Only independent confirmed episodes with a fresh pre-motion
+          // baseline are usable to teach the last-eight movement window.
+          const bool separated = eligible_episodes_ == 0 ||
+              static_cast<uint32_t>(now - last_eligible_ms_) >= 5000U;
+          if (episode_pre_valid_ && separated) {
+            ++eligible_episodes_;
+            last_eligible_ms_ = now;
+            last_transition_bins_ = last_episode_over10x_ = last_episode_over256x_ = 0;
+            for (size_t i = 0; i < kBins; ++i) {
+              const float response = episode_sum_[i] / episode_count_;
+              const float baseline = std::max(
+                  std::max(quiet_[i], episode_pre_mean_[i]), 0.0001f);
+              const float ratio = response / baseline;
+              // At least three above-threshold observations AND >=25%
+              // of the episode. A solitary RF burst never earns a hit.
+              const bool transitioned = episode_prequiet_[i] &&
+                  episode_above_[i] >= 3U &&
+                  static_cast<uint32_t>(episode_above_[i]) * 4U >= episode_count_ &&
+                  ratio >= 4.0f;
+              uint8_t vote = 0;
+              if (transitioned) {
+                ++last_transition_bins_;
+                if (ratio >= 10.0f) ++last_episode_over10x_;
+                if (ratio >= 256.0f) ++last_episode_over256x_;
+                // Contrast 4x -> 256x is retained in the score; a small
+                // denominator alone cannot create an arbitrary 256x reward.
+                const float strength =
+                    std::log2(std::min(ratio, 256.0f) / 4.0f) / 6.0f;
+                vote = static_cast<uint8_t>(1 + 254.0f * strength);
+              }
+              response_history_[history_next_][i] = vote;
             }
-            response_history_[history_next_][i] = vote;
+            history_next_ = (history_next_ + 1) % kEpisodeWindow;
+            if (history_count_ < kEpisodeWindow) ++history_count_;
+            // Quiet-only data cannot modify candidates already earned.
+            if (history_count_ == kEpisodeWindow) update_candidates_();
+          } else {
+            ++skipped_episodes_;
           }
-          history_next_ = (history_next_ + 1) % kEpisodeWindow;
-          if (history_count_ < kEpisodeWindow) ++history_count_;
-          // Candidate weights change only on fresh, validated movement
-          // evidence. A quiet-only period may update the reference for the
-          // NEXT episode, but cannot reshuffle an already learnt ranking.
-          if (history_count_ == kEpisodeWindow) update_candidates_();
         } else {
           ++rejected_;
         }
@@ -153,8 +207,18 @@ class CsiLearning {
       return false;
     }
 
-    // Held motion cannot teach quiet. Tolerate isolated RF bursts within a
-    // 5-second block, but never include those bursts in its quiet estimate.
+    // The pre-movement evidence is independent of held ON: a genuine
+    // stable quiet interval can precede a new motion while hold is active.
+    // Never collect the triggering frame or a confirmed motion frame.
+    if (!raw_motion && raw_quiet && !confirmed) {
+      for (size_t i = 0; i < kBins; ++i)
+        pre_energy_[pre_next_][i] = energy[i];
+      pre_next_ = (pre_next_ + 1) % kPreQuietWindow;
+      if (pre_count_ < kPreQuietWindow) ++pre_count_;
+      pre_last_ms_ = now;
+    }
+    // Held motion cannot teach the long-term quiet baseline.
+    // Tolerate isolated RF bursts within a five-second block.
     if (held) { ++hold_resets_; reset_quiet_block_(); return false; }
     if (!quiet_started_) { quiet_started_ = true; quiet_start_ms_ = now; }
     ++quiet_count_;
@@ -174,8 +238,8 @@ class CsiLearning {
       quiet_[i] += (sample - quiet_[i]) / std::min<uint32_t>(quiet_blocks_, 24U);
     }
     reset_quiet_block_();
-    // Three distinct hits in a *complete* rolling window of eight confirmed
-    // episodes are required before any positive weighting is possible.
+    // Five genuine quiet-to-movement hits in eight qualified episodes are
+    // required before a bin can earn a positive weight.
     if (!ready() || history_count_ < kEpisodeWindow) return false;
     // New independent evidence is required for EVERY revision; elapsed time
     // alone never repeats a previous vote and never drives weights to a limit.
@@ -208,7 +272,7 @@ class CsiLearning {
       }
       hit_counts_[i] = hits;
       float target = 1.0f;
-      if (hits >= 3) {
+      if (hits >= kMinHits) {
         ++recurrent_bins_;
         ever_promoted_[i] = true;
         // Absolute evidence matters: numerous genuinely good bins can ALL
@@ -216,7 +280,9 @@ class CsiLearning {
         // global score if every bin receives the same weight.
         const float repeatability = static_cast<float>(hits) / kEpisodeWindow;
         const float contrast = static_cast<float>(strength_sum) / (255.0f * hits);
-        target += repeatability * (0.35f + 0.65f * contrast);
+        // Strength matters much more than mere recurrence. A marginal 4x
+        // reaction is weak; eight clean, repeated 256x responses can reach 2.
+        target += repeatability * (0.15f + 0.85f * contrast);
       } else if (hits == 0 && !ever_promoted_[i]) {
         // Persistently nonresponsive bins can be downweighted to 0.70,
         // never discarded. Formerly useful bins instead decay toward 1.00
@@ -238,12 +304,23 @@ class CsiLearning {
   }
   float weights_[kBins]{}, candidates_[kBins]{}, quiet_[kBins]{};
   float quiet_sum_[kBins]{}, episode_sum_[kBins]{};
+  // A rolling 0.8-second pre-motion baseline, independent of ON hold.
+  // The snapshot is frozen at the episode's first raw-motion observation.
+  float pre_energy_[kPreQuietWindow][kBins]{};
+  float episode_pre_mean_[kBins]{}, episode_threshold_[kBins]{};
+  uint16_t episode_above_[kBins]{};
+  bool episode_prequiet_[kBins]{};
+  size_t pre_next_{0}, pre_count_{0};
+  uint32_t pre_last_ms_{0};
+  bool episode_pre_valid_{false};
   // 8 episodes x 48 one-byte movement contrast votes: no flash writes.
   uint8_t response_history_[kEpisodeWindow][kBins]{}, hit_counts_[kBins]{};
   bool ever_promoted_[kBins]{};
   size_t history_next_{0}, history_count_{0};
   uint32_t recurrent_bins_{0}, promoted_bins_{0}, strong_bins_{0}, weak_bins_{0};
   uint32_t last_episode_over10x_{0}, last_episode_over256x_{0};
+  uint32_t last_prequiet_bins_{0}, last_transition_bins_{0};
+  uint32_t eligible_episodes_{0}, skipped_episodes_{0}, last_eligible_ms_{0};
   float mean_candidate_{1.0f};
   uint32_t quiet_blocks_{0}, episodes_{0}, rejected_{0}, revisions_{0}, discarded_blocks_{0};
   uint32_t hold_resets_{0}, discontinuities_{0};
