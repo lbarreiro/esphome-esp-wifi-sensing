@@ -246,7 +246,9 @@ class CsiLearning {
     if (episodes_ - applied_episodes_ < 3 || quiet_blocks_ - applied_quiet_ < 6 ||
         static_cast<uint32_t>(now - last_apply_ms_) < 300000) return false;
     for (size_t i = 0; i < kBins; ++i) {
-      weights_[i] += std::max(-0.10f, std::min(0.10f, candidates_[i] - weights_[i]));
+      // Apply 90% of the newly learned correction per authorized revision.
+      // The episode/quiet/time gates above still prevent a silent-only drift.
+      weights_[i] += 0.90f * (candidates_[i] - weights_[i]);
       weights_[i] = std::max(0.70f, std::min(2.00f, weights_[i]));
     }
     applied_episodes_ = episodes_;
