@@ -141,10 +141,6 @@ void ESPWiFiSensing::setup() {
     this->motion_binary_sensor_->publish_state(false);
     this->mvs_initial_state_published_ = true;
   }
-  if (this->selected_algorithm_ == CsiAlgorithm::MVS && this->motion_128_binary_sensor_ != nullptr) {
-    this->motion_128_binary_sensor_->publish_state(false);
-    this->mvs_128_initial_state_published_ = true;
-  }
 }
 
 
@@ -215,22 +211,6 @@ void ESPWiFiSensing::loop() {
         ESP_LOGI(TAG, "MVS3 gate eligible=%u skipped=%u prequiet=%u transitions=%u",
           static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
           static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()));
-      }
-    }
-    // Independent 128-byte comparison output: never affects the 256-byte decision.
-    if (this->motion_128_binary_sensor_ != nullptr) {
-      const bool seen_128 = this->mvs_128_confirmation_seen_.load(std::memory_order_acquire);
-      const uint32_t last_128 = this->mvs_128_last_confirmation_ms_.load(std::memory_order_relaxed);
-      const bool active_128 = seen_128 && static_cast<uint32_t>(now - last_128) < this->motion_hold_time_ms_;
-      if (!this->mvs_128_initial_state_published_) {
-        this->motion_128_binary_sensor_->publish_state(false);
-        this->mvs_128_initial_state_published_ = true;
-      }
-      if (active_128 != this->mvs_128_published_state_) {
-        this->mvs_128_published_state_ = active_128;
-        ESP_LOGI(TAG, "MVS 128-byte comparison motion %s (hold=%u ms)", active_128 ? "ON" : "OFF",
-                 static_cast<unsigned>(this->motion_hold_time_ms_));
-        this->motion_128_binary_sensor_->publish_state(active_128);
       }
     }
     // Hold expiry must run on every ESPHome loop, including when CSI stops.
@@ -630,17 +610,6 @@ void ESPWiFiSensing::csi_callback_(
       self->mvs_last_accepted_ms_.store(sample_now, std::memory_order_relaxed);
     else
       self->mvs_rejected_packets_.fetch_add(1, std::memory_order_relaxed);
-    // Primary pipeline still rejects 128-byte packets. Separate CSI profile and
-    // calibration for the comparison sensor, using the same configured parameters.
-    if (packet.len == 128 && self->motion_128_binary_sensor_ != nullptr) {
-      const ParsedCsiPacket &parsed_128 = self->csi_128_parser_.parse(self->pipeline_.latest_packet(), true);
-      const MvsResult result_128 = self->mvs_128_algorithm_.process(parsed_128, sample_now);
-      if (result_128.motion) {
-        self->mvs_128_last_confirmation_ms_.store(self->mvs_128_algorithm_.last_motion_time(),
-                                                  std::memory_order_relaxed);
-        self->mvs_128_confirmation_seen_.store(true, std::memory_order_release);
-      }
-    }
     const MvsResult result = self->mvs_algorithm_.process(parsed_packet, sample_now);
     if (result.observation_added) self->mvs_last_observation_ms_.store(sample_now, std::memory_order_relaxed);
     // Only actual confirmed detections refresh the hold, never stale CSI state.
@@ -651,8 +620,8 @@ void ESPWiFiSensing::csi_callback_(
     }
     self->motion_state_ = result.motion;
     self->latest_csi_metric_ = static_cast<uint32_t>(result.score * 100.0f);
-    // Third branch parses ORIGINAL bytes, before gain compensation. It cannot
-    // inspect result, primary motion state, or the 128-byte comparison state.
+    // MVS-3 parses ORIGINAL CSI bytes into its own parser and private state.
+    // It never reads the MVS-256 decision, score, profile or learning state.
     if (packet.len == 256 && self->motion_3_binary_sensor_ != nullptr) {
       const auto &raw_256 = self->csi_3_parser_.parse(packet);
       const auto third = self->mvs_3_algorithm_.process(raw_256, sample_now);
@@ -724,8 +693,6 @@ void ESPWiFiSensing::dump_config() {
   if (this->selected_algorithm_ == CsiAlgorithm::MVS) {
     ESP_LOGCONFIG(TAG, "  MVS renewal: fixed 2 peaks per window");
     ESP_LOGCONFIG(TAG, "  CSI 256: primary motion output");
-    ESP_LOGCONFIG(TAG, "  CSI 128: independent comparison output (%s)",
-                  this->motion_128_binary_sensor_ != nullptr ? "enabled" : "disabled");
   } else {
     ESP_LOGCONFIG(TAG, "  Adaptive threshold: %s", this->adaptive_threshold_enabled_ ? "enabled" : "disabled");
     ESP_LOGCONFIG(TAG, "  Sigma multiplier: %.2f", this->sigma_multiplier_);
@@ -739,7 +706,6 @@ void ESPWiFiSensing::dump_config() {
   }
   LOG_BINARY_SENSOR("  ", "CSI Motion 256 Learned", this->motion_3_binary_sensor_);
   LOG_BINARY_SENSOR("  ", "CSI Motion 256", this->motion_binary_sensor_);
-  LOG_BINARY_SENSOR("  ", "CSI Motion 128 Comparison", this->motion_128_binary_sensor_);
 }
 
 }  // namespace esp_wifi_sensing
