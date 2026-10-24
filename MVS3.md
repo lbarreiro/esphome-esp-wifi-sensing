@@ -1,111 +1,96 @@
-# Three independent CSI branches
+# MVS-256 reference and MVS-3 learned detector
 
-Base: `feature/mvs-configurable-parameters`, commit
-`7a3b693e1d8edbe6288f967c7e5607c3ee524828`.
-Work branch: `feature/mvs3-raw-episode-learning`.
+Branch: `feature/mvs3-raw-episode-learning`.
 
-## Data flow
+## Two independent detection paths
 
-One existing CSI receiver and one existing ping session feed all branches.
-No additional traffic is generated and the ping interval is unchanged.
+Both detectors use the existing Wi-Fi CSI radio and the same ping session.
+No additional ping traffic is created.
 
-1. **Reference MVS-256**: existing pipeline, parser, MVS, calibration, filter,
-   hold and binary sensor. `mvs_algorithm.h/.cpp` are unchanged. Neither its
-   observations nor its decisions are inputs to the learner.
-2. **Comparison MVS-128**: existing separate parser/MVS and binary sensor,
-   unchanged. It cannot influence either 256 branch.
-3. **Learned MVS-256 (MVS-3)**: independent parser of the original 256-byte
-   packet (before gain compensation), independent observation accumulator,
-   jitter calibration, confirmation filter and hold. Only this branch uses the
-   learner. It is enabled by configuring `motion_3`.
+1. **MVS1 / MVS-256 reference (`motion`)**: the existing gain-compensation
+   pipeline and existing parser feed a private `MvsAlgorithm` instance with
+   its own temporal profile, quiet jitter, confirmation filter, and ON hold.
+   The reference algorithm implementation (`mvs_algorithm.h/.cpp`) is unchanged.
+2. **MVS-3 / MVS-256 learned (`motion_3`)**: a separate `CsiParser` parses
+   the original 256-byte CSI packet before optional gain compensation.
+   A separate `ExperimentalMvsAlgorithm` instance owns its own observation
+   accumulator, temporal profile, filter, quiet calibration, ON hold, and
+   `CsiLearning` state. Its weights never flow into MVS1.
 
-All three use the existing configured MVS parameters. The experimental MVS is
-kept in separate files so its changes cannot alter either reference algorithm.
+The shared configuration setters supply the *same configured parameters* to
+both independent detectors. The radio, packet source and callback scheduling are
+necessarily shared; algorithm state and decisions are **not** shared.
+The C++ regression test processes identical packets through MVS1 both alone
+and alongside an adapting MVS-3, comparing every returned score and state.
+This is a software isolation check, not a guarantee of zero shared CPU load.
 
-## Learning, step by step
+The unused **MVS2 / CSI-128 comparison detector has been removed**: no parser
+instance, algorithm instance, state, binary sensor, or 128-byte comparison
+processing remains. A passive packet-length counter for 128-byte CSI may still
+appear in INFO logs; it is a diagnostic counter, not a detector.
 
-The 48 positions are the existing MVS bins, not 48 Wi-Fi channels. They aggregate
-the parser's valid subcarriers into log-amplitude observations. All 48 always
-contribute. Common-mode removal and temporal differences happen **before any
-weighting**. The learner receives the square of each unweighted difference.
+## MVS-3 learning
 
-* **Silence:** contiguous 5-second blocks, at least 20 observations per block,
-  with low raw energy and no experimental held ON state. Ambiguous observations
-  discard the partial block. Six complete blocks bootstrap the independent raw
-  gate. Per-bin quiet energy is averaged with a capped 24-block time scale.
-* **Movement response:** a raw episode requires at least six responsive bins
-  and a raw energy increase relative to the quiet profile. It ends after two
-  seconds of raw quiet. Acceptance requires at least five peak observations,
-  at least 500 ms between first/last peak, duration no longer than 30 seconds,
-  and an actual MVS-3 confirmation during the episode. Held ON alone is not a
-  confirmation. Each accepted episode contributes one mean-energy vote.
-* **Sensitivity/recurrence:** each bin's movement-to-quiet ratio is capped at
-  20. The recurrence measure is the proportion of accepted episodes in which
-  that bin exceeds four times its quiet energy (with an absolute noise floor).
-  Movement and recurrence averages have a capped 16-episode time scale.
+* 48 bins, all retained in the weighted jitter calculation; allowed weights
+  remain in `[0.70, 2.00]` and begin at `1.00` on boot.
+* Long-term quiet baselines are built from completed five-second blocks with
+  enough valid raw-quiet observations. Quiet updates alone do not revise
+  candidate weights.
+* A raw movement episode must be confirmed by MVS-3, meet minimum duration
+  and count conditions, and finish with at least two seconds of raw quiet.
+* A learning-eligible episode also needs a fresh eight-observation pre-motion
+  baseline and separation from previous eligible episodes. Each subcarrier
+  must be quiet before that episode, exceed its individualized threshold in
+  at least three observations and for at least 25% of its peak observations,
+  and reach a mean movement-to-quiet ratio of at least 4x.
+* Only **5 or more valid transitions in the last 8 eligible episodes** earn a
+  positive candidate. Relative movement strength is weighted heavily; its
+  logarithmic contrast term preserves differences from 4x to 256x.
+* Candidate revision is allowed only at a completed quiet block, with at
+  least three newly accepted episodes, at least six newly accepted quiet
+  blocks, and at least five minutes since the prior revision. A new revision
+  applies **90% of the gap** to the candidate, with absolute clamping:
 
-Candidate weight = `0.75 + 0.15 * silence + 0.30 * response + 0.30 * recurrence`,
-clamped to `[0.75, 1.50]`. Silence is relative cleanliness, response is the
-episode ratio divided by 10 (capped at 1), recurrence lies in `[0,1]`.
-Initial weights are all 1. Each committed change is limited to 0.05 per bin.
+  `weight = clamp(weight + 0.90 * (candidate - weight), 0.70, 2.00)`
 
-Every revision requires **three new accepted episodes and six new quiet blocks**
-since the preceding revision, at least five minutes since that revision (or
-boot), and completion of a quiet block outside an episode and outside the
-MVS-3 hold. Repeated quiet or time alone cannot repeatedly apply old evidence.
-This is intentionally conservative: a busy/noisy room may never earn a revision.
-Boot should include a quiet period. There is no externally verified movement
-ground truth; CSI corroboration and bounded updates reduce, but do not prove
-absence of, environmental classification errors. Nothing is persisted on reboot.
+The initial 8 eligible episodes and the 5/8 rule are unchanged by the 90%
+convergence choice. No learning state is persisted across firmware restarts.
 
-## Jitter and recalibration
+After a committed weight update MVS-3 independently reprojects its quiet
+reference and clears its filter/previous profile to prevent a synthetic
+temporal jump. This does not recalibrate or reset MVS1.
 
-Experimental jitter is `sqrt(sum(weight[i] * raw_energy[i]) / sum(weights) + 1e-4)`.
-After a revision, quiet jitter is projected from the learner's **unweighted**
-per-bin quiet energies using the same formula. The confirmation filter and
-previous profile are cleared. The next observation seeds the profile without
-making a decision, so the change cannot manufacture a temporal jump. Accumulation
-has already completed at that point. A CSI gap or parsed-layout change discards
-partial observations/episodes; it does not count as movement evidence.
+## Logs
 
-## Minute log
+* `MVS3 learn q=... ep=... reject=... rev=... hi=bin:candidate/weight lo=...`
+* `MVS3 diag obs=... held=... score=... energy=... limit=... rawquiet=...`
+* `MVS3 bins win=8/8 hit5=... up=... strong=... weak=... mean=...`
+* `MVS3 gate eligible=... skipped=... prequiet=... transitions=...`
 
-One INFO line every 60 seconds in the main loop, even if CSI has stopped:
+The main ESPHome loop reads atomic snapshots of MVS-3 diagnostics; it never
+directly reads or mutates callback-owned learning arrays.
 
-`MVS3 learn q=... ep=... reject=... rev=... hi=bin:candidate/weight lo=bin:candidate/weight`
+## Update YAML
 
-`q` counts complete quiet blocks; `ep` counts accepted episodes; `reject` counts
-rejected/aborted episodes; `rev` counts committed revisions. Bin indices are
-zero-based. `hi`/`lo` show extrema of the candidates; all 48 weights remain active.
-The loop reads atomic diagnostic scalars, never the callback-owned learner.
-
-## Compile and run
-
-```sh
-git clone --branch feature/mvs3-raw-episode-learning https://github.com/lbarreiro/esphome-esp-wifi-sensing.git
-cd esphome-esp-wifi-sensing
-python -m pip install esphome pytest
-```
-
-Create `examples/secrets.yaml` locally (it is ignored by Git):
+In your own ESPHome YAML, keep the independent `motion` and `motion_3`
+binary sensors, but **delete the entire `motion_128:` block**, otherwise
+ESPHome configuration validation will reject the obsolete key:
 
 ```yaml
-wifi_ssid: "your-network"
-wifi_password: "your-password"
+binary_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    motion:
+      name: CSI Motion 256 Reference
+    motion_3:
+      name: CSI Motion 256 Learned
 ```
 
-Then:
+The existing example filename `examples/mvs_three_branches.yaml` is kept
+unchanged so automated build paths continue working; its contents now describe
+only the two supported detectors.
 
-```sh
-esphome config examples/mvs_three_branches.yaml
-esphome compile examples/mvs_three_branches.yaml
-esphome run examples/mvs_three_branches.yaml
-```
-
-The example uses `esp32dev` with ESP-IDF. Adapt board/network settings to your
-hardware. In an existing YAML, use the same component from this work branch and
-add `motion_3` alongside `motion` and `motion_128`; keep your existing MVS settings.
-For a remote external component, select this branch explicitly:
+The external component branch remains:
 
 ```yaml
 external_components:
@@ -117,18 +102,12 @@ external_components:
     refresh: 0s
 ```
 
-## Tests
+## Validation
 
-Existing regression model: `python -m pytest tests/test_mvs_algorithm.py`.
-The new test executes the real learner and MVS implementations with a host C++
-compiler, rather than a Python copy of their logic:
+GitHub Actions runs the Python reference regression suite, host C++ tests,
+ESPHome YAML validation, and a full ESP-IDF firmware build.
+The C++ tests verify 90% convergence, bounded weights, quiet-only stability,
+recurrent transitions, and the independence of MVS1 from MVS-3 learning.
 
-```sh
-c++ -std=c++17 -Wall -Wextra -Werror -Itests/stubs -Icomponents/esp_wifi_sensing tests/test_learning.cpp components/esp_wifi_sensing/mvs_algorithm.cpp components/esp_wifi_sensing/experimental_mvs_algorithm.cpp -o test_learning
-./test_learning
-```
-
-The test Wi-Fi header is a host-only type stub and is not part of the firmware.
-Hardware validation should compare the three sensors in a quiet room and over
-repeated separated movements; observe evidence counts before expecting weights
-to change. Build success alone does not establish sensing accuracy.
+Build success is not proof of higher real-world detection accuracy. Compare
+the ON/OFF traces of the two sensors against known movement/empty-room periods.
