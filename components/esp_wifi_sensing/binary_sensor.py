@@ -6,7 +6,6 @@ from esphome.const import CONF_ID, DEVICE_CLASS_MOTION
 from . import CONF_ESP_WIFI_SENSING_ID, ESP_WIFI_SENSING_COMPONENT_SCHEMA
 
 CONF_MOTION = "motion"
-CONF_MOTION_128 = "motion_128"
 CONF_MOTION_3 = "motion_3"
 
 DEPENDENCIES = ["esp_wifi_sensing"]
@@ -21,12 +20,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_MOTION_3): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_MOTION,
             ),
-            cv.Optional(CONF_MOTION_128): binary_sensor.binary_sensor_schema(
-                device_class=DEVICE_CLASS_MOTION,
-            ),
         }
     ).extend(ESP_WIFI_SENSING_COMPONENT_SCHEMA),
-    cv.has_at_least_one_key(CONF_MOTION, CONF_MOTION_128, CONF_MOTION_3),
+    cv.has_at_least_one_key(CONF_MOTION, CONF_MOTION_3),
 )
 
 
@@ -36,11 +32,6 @@ async def to_code(config):
     if CONF_MOTION in config:
         sens = await binary_sensor.new_binary_sensor(config[CONF_MOTION])
         cg.add(parent.set_motion_binary_sensor(sens))
-
-    if CONF_MOTION_128 in config:
-        sens_128 = await binary_sensor.new_binary_sensor(config[CONF_MOTION_128])
-        cg.add(parent.set_motion_128_binary_sensor(sens_128))
-
 
     if CONF_MOTION_3 in config:
         sens_3 = await binary_sensor.new_binary_sensor(config[CONF_MOTION_3])
