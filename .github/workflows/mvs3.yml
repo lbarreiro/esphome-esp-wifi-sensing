@@ -20,6 +20,24 @@ jobs:
         run: python -m pip install esphome==2026.10.0 pytest
       - name: Reference regression tests
         run: python -m pytest -q tests/test_mvs_algorithm.py
+      - name: Reject retired motion_128 entity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          original = Path('examples/mvs_three_branches.yaml').read_text()
+          assert '    motion_3:\n' in original
+          modified = original.replace(
+              '    motion_3:\n',
+              '    motion_128:\n      name: Retired comparison\n    motion_3:\n',
+              1,
+          )
+          Path('examples/mvs_rejected_128.yaml').write_text(modified)
+          Path('examples/secrets.yaml').write_text('wifi_ssid: build-only\nwifi_password: build-only-password\n')
+          PY
+          if esphome config examples/mvs_rejected_128.yaml; then
+            echo 'ERROR: obsolete motion_128 key was incorrectly accepted' >&2
+            exit 1
+          fi
       - name: Execute C++ learning tests
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Itests/stubs -Icomponents/esp_wifi_sensing tests/test_learning.cpp components/esp_wifi_sensing/mvs_algorithm.cpp components/esp_wifi_sensing/experimental_mvs_algorithm.cpp -o /tmp/test_learning
