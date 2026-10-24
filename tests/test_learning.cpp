@@ -74,7 +74,10 @@ int main() {
   float saved[48];
   for(size_t i=0;i<48;++i) {
     saved[i]=l.weights()[i];
-    assert(saved[i]>=0.70f && saved[i]<=2.00f && std::fabs(saved[i]-1)<=0.10001f);
+    assert(saved[i]>=0.70f && saved[i]<=2.00f);
+    // Apply precisely 90% of each learnt delta on the first revision.
+    const float expected=1.0f+0.90f*(l.candidate(i)-1.0f);
+    assert(std::fabs(saved[i]-expected)<0.0001f);
   }
   assert(saved[0]>saved[47]);
   assert(std::isfinite(l.quiet_jitter()) && l.quiet_jitter()>=0.01f);
@@ -121,8 +124,8 @@ int main() {
   assert(sparse.revisions()==1);
   assert(sparse.candidate(0)>1.90f);
   assert(sparse.candidate(47)<1.0f);
-  assert(std::fabs(sparse.weights()[0]-1.10f)<0.0001f);
-  assert(std::fabs(sparse.weights()[47]-0.90f)<0.0001f);
+  assert(std::fabs(sparse.weights()[0]-(1.0f+0.90f*(sparse.candidate(0)-1.0f)))<0.0001f);
+  assert(std::fabs(sparse.weights()[47]-0.73f)<0.0001f);
 
   // Once movement has established the ranking, learning more silence must
   // not move candidates (or weights) when no further episode is confirmed.
@@ -158,7 +161,8 @@ int main() {
   assert(varied.candidate(47)==0.70f);
   quiet(varied,varied_now);
   assert(varied.revisions()==1);
-  assert(varied.weights()[8]<=1.10001f && varied.weights()[8]>=1.09999f);
+  assert(std::fabs(varied.weights()[8]-(1.0f+0.90f*(varied.candidate(8)-1.0f)))<0.0001f);
+  assert(varied.weights()[8]>1.8f);
   // Rolling out former hits causes a previously useful bin to return
   // toward neutral, rather than being permanently rewarded or discarded.
   for (unsigned ep=8;ep<16;++ep) varied_episode(varied,varied_now,ep);
@@ -245,6 +249,10 @@ int main() {
   assert(third.learning().episodes()==1);
   assert(third.learning().revisions()==0);
 
+  // Isolation regression: run the reference MVS-256 both alone and beside
+  // a training MVS-3. Its score, ON/OFF and timing must remain IDENTICAL,
+  // including after MVS-3 revises its internal weights.
+  MvsAlgorithm reference_alone, reference_beside;
   ExperimentalMvsAlgorithm adaptive;
   bool revised=false;
   for(uint32_t t=0;t<13200;++t) {
@@ -252,7 +260,14 @@ int main() {
     for(size_t i=0;i<48;++i) packet.subcarriers[i].amplitude =
       std::expm1(2.0f + 0.05f*std::sin(float(i)) +
         (moving ? 0.5f*std::sin(i*0.55f+t*0.37f) : 0.0f));
+    const auto a=reference_alone.process(packet,t*100);
     auto e=adaptive.process(packet,t*100);
+    const auto b=reference_beside.process(packet,t*100);
+    assert(a.ready==b.ready);
+    assert(a.motion==b.motion);
+    assert(a.observation_added==b.observation_added);
+    assert(a.observations==b.observations);
+    assert(a.score==b.score);
     if(adaptive.learning().revisions()>0) {
       revised=true;
       assert(!e.motion); // committing/reseeding weights never creates motion
@@ -261,5 +276,5 @@ int main() {
   }
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
-  std::puts("C++ learning/weights/episodes/gaps/rollover and neutral MVS equivalence: PASS");
+  std::puts("C++ 90% weights, gated revisions, rolling transitions, MVS1/MVS3 isolation: PASS");
 }
