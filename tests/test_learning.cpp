@@ -266,7 +266,7 @@ int main() {
     assert(a.ready==b.ready);
     assert(a.motion==b.motion);
     assert(a.observation_added==b.observation_added);
-    assert(a.observations==b.observations);
+    assert(a.observation_count==b.observation_count);
     assert(a.score==b.score);
     if(adaptive.learning().revisions()>0) {
       revised=true;
