@@ -253,7 +253,7 @@ int main() {
   // a training MVS-3. Its score, ON/OFF and timing must remain IDENTICAL,
   // including after MVS-3 revises its internal weights.
   MvsAlgorithm reference_alone, reference_beside;
-  ExperimentalMvsAlgorithm adaptive;
+  ExperimentalMvsAlgorithm adaptive, learned_alone;
   bool revised=false;
   for(uint32_t t=0;t<13200;++t) {
     const bool moving=(t%1600 >= 400 && t%1600 < 450);
@@ -261,8 +261,19 @@ int main() {
       std::expm1(2.0f + 0.05f*std::sin(float(i)) +
         (moving ? 0.5f*std::sin(i*0.55f+t*0.37f) : 0.0f));
     const auto a=reference_alone.process(packet,t*100);
-    auto e=adaptive.process(packet,t*100);
+    const auto learned_control=learned_alone.process(packet,t*100);
+    const auto e=adaptive.process(packet,t*100);
     const auto b=reference_beside.process(packet,t*100);
+    // Also prove the reverse: running MVS1 beside MVS-3 cannot change
+    // the learned branch's state, score or its 48 learned weights.
+    assert(learned_control.ready==e.ready);
+    assert(learned_control.motion==e.motion);
+    assert(learned_control.score==e.score);
+    assert(learned_control.observation_count==e.observation_count);
+    assert(learned_alone.learning().episodes()==adaptive.learning().episodes());
+    assert(learned_alone.learning().revisions()==adaptive.learning().revisions());
+    for(size_t i=0;i<CsiLearning::kBins;++i)
+      assert(learned_alone.learning().weights()[i]==adaptive.learning().weights()[i]);
     assert(a.ready==b.ready);
     assert(a.motion==b.motion);
     assert(a.observation_added==b.observation_added);
