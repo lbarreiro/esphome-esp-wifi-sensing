@@ -45,10 +45,14 @@ class Mvs3Priority {
     size_t selected[kTop]{};
     active_ = learning.select_top_four(selected);
     for (size_t j = 0; j < kTop; ++j) top_[j] = active_ ? selected[j] : 0;
-    float top_quiet = 0.0f;
+    float top_quiet = 0.0f, top_weight = 0.0f;
     if (active_) {
-      for (size_t j = 0; j < kTop; ++j) top_quiet += learning.quiet_energy(top_[j]);
-      top_quiet /= static_cast<float>(kTop);
+      for (size_t j = 0; j < kTop; ++j) {
+        const size_t i = top_[j];
+        top_quiet += learning.quiet_energy(i) * learning.weights()[i];
+        top_weight += learning.weights()[i];
+      }
+      top_quiet /= top_weight;
     }
     quiet_jitter_ = std::sqrt(top_quiet + kEpsilon);
     score_ = 0;
@@ -75,7 +79,7 @@ class Mvs3Priority {
       top_weight += weights[i];
     }
     const float top_mean = top_energy / top_weight;
-    const float other_mean = (all_energy - top_energy) / (all_weight - top_weight);
+    const float other_mean = std::max(0.0f, all_energy - top_energy) / (all_weight - top_weight);
     if (selected_energy != nullptr) *selected_energy = top_mean;
     return kTopShare * top_mean + kOtherShare * other_mean;
   }
