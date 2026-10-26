@@ -163,6 +163,11 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> learn_eligible_episodes_{0}, learn_skipped_episodes_{0};
   std::atomic<uint32_t> learn_prequiet_bins_{0}, learn_transition_bins_{0};
   std::atomic<float> learn_mean_candidate_{1.0f};
+  // Experimental four-bin 70/30 decision, published only via scalar atomics.
+  std::atomic<bool> priority_active_{false};
+  std::atomic<float> priority_score_{0};
+  std::atomic<uint32_t> priority_confirmations_{0};
+  std::atomic<uint32_t> priority_bins_[4]{};
   std::atomic<bool> learn_raw_quiet_{false}, learn_held_{false};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
