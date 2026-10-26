@@ -8,6 +8,7 @@
 #include "csi_parser.h"
 #include "mvs_algorithm.h"
 #include "csi_learning.h"
+#include "mvs3_priority.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -20,11 +21,15 @@ class ExperimentalMvsAlgorithm {
   bool motion_state() const { return motion_state_; }
   uint32_t last_motion_time() const { return last_motion_time_; }
   size_t observation_count() const { return total_observations_; }
+  bool priority_active() const { return priority_.active(); }
+  float priority_score() const { return priority_.score(); }
+  uint32_t priority_confirmations() const { return priority_.confirmations(); }
+  size_t priority_bin(size_t i) const { return priority_.top_bin(i); }
 
   static constexpr size_t kBins = 48;
   static constexpr size_t kMaxFilterWindow = 64;
-  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); }
-  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); }
+  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); priority_.set_filter_window(count); }
+  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); priority_.set_filter_count(count); }
   void set_update_interval(uint32_t ms) { update_interval_ms_ = ms; }
   void set_quiet_boot_samples(uint32_t count) { quiet_boot_samples_ = count; }
   void set_quiet_alpha(float alpha) { quiet_alpha_ = alpha; }
@@ -34,7 +39,9 @@ class ExperimentalMvsAlgorithm {
   const CsiLearning &learning() const { return learning_; }
  private:
   CsiLearning learning_{};
+  Mvs3Priority priority_{};
   float raw_energy_[kBins]{};
+  float selected_energy_{0};
   uint32_t last_packet_ms_{0};
   bool packet_seen_{false};
   size_t last_packet_count_{0};
