@@ -60,12 +60,50 @@ After a committed weight update MVS-3 independently reprojects its quiet
 reference and clears its filter/previous profile to prevent a synthetic
 temporal jump. This does not recalibrate or reset MVS1.
 
+## Four-bin priority (70/30)
+
+The priority decision is **inactive** until at least four bins qualify under
+the existing rolling `5/8` verified quiet-to-motion recurrence rule. At a
+guarded weight revision, MVS-3 deterministically chooses the four highest
+**qualified** candidates; a tie favors the lower bin index. The selection is
+held constant until a later guarded revision (no changes from isolated new
+episodes). If fewer than four qualify on a subsequent revision, the priority
+path is disabled.
+
+Once enabled, global MVS-3 decision energy is
+`0.70 * weighted_mean(energy[top4]) +
+0.30 * weighted_mean(energy[other44])`. Each group is separately normalized
+by its total learned weight. **Before qualification**, the global score is the
+original 48-bin weighted mean.
+
+In addition, the four selected bins have their own score, independently
+calibrated using their own learned quiet energies, and an independent rolling
+motion confirmation filter. Like the global filter, this requires three hits
+in eight observations for OFF-to-ON and two in eight to renew ON. The final
+MVS-3 decision is `global_confirmed OR top4_confirmed`; therefore the four
+can trigger ON even when the other 44 are unresponsive. Both paths share the
+same 120-second output hold, but no filter state. Changes of priority
+selection, a CSI gap or a weight revision reset their confirmation history
+rather than causing a synthetic ON. This experiment can increase sensitivity
+and also false positives, so evaluate against known empty-room periods.
+
+The global MVS3 score (`diag score`) and four-bin score (`priority score`)
+have their own calibrated quiet references and use the configured threshold
+without comparing raw energy of 4 bins directly to energy of 48 bins.
+
 ## Logs
 
 * `MVS3 learn q=... ep=... reject=... rev=... hi=bin:candidate/weight lo=...`
 * `MVS3 diag obs=... held=... score=... energy=... limit=... rawquiet=...`
 * `MVS3 bins win=8/8 hit5=... up=... strong=... weak=... mean=...`
 * `MVS3 gate eligible=... skipped=... prequiet=... transitions=...`
+* `MVS3 priority active=... split=70/30 bins=a,b,c,d score=... confirms=...`
+
+`active=0` means the 48-bin metric is still used and no priority confirmation
+is attempted. `active=1` means four qualified bins were selected at a
+revision; `confirms` counts confirmations from that path, including renewals.
+A low global score does **not** preclude motion when the priority score
+and its own filter confirm ON.
 
 The main ESPHome loop reads atomic snapshots of MVS-3 diagnostics; it never
 directly reads or mutates callback-owned learning arrays.
