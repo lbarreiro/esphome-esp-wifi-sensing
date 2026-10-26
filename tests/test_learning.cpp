@@ -163,6 +163,49 @@ int main() {
   assert(varied.revisions()==1);
   assert(std::fabs(varied.weights()[8]-(1.0f+0.90f*(varied.candidate(8)-1.0f)))<0.0001f);
   assert(varied.weights()[8]>1.8f);
+
+  // Priority is never enabled with an incomplete or unqualified episode window.
+  Mvs3Priority priority;
+  priority.configure(CsiLearning{});
+  assert(!priority.active());
+  float energy[48]{}, unit_weights[48]{};
+  for (size_t i=0;i<48;++i) unit_weights[i]=1.0f;
+  assert(std::fabs(priority.combined_energy(energy,unit_weights))<0.00001f);
+  priority.configure(varied);
+  assert(priority.active());
+  bool selected[48]{};
+  for (size_t j=0;j<4;++j) {
+    const auto b=priority.top_bin(j);
+    assert(b<48 && !selected[b]);
+    selected[b]=true;
+    assert(varied.hits(b)>=5 && varied.candidate(b)>1.0f);
+  }
+  // A top-four-only disturbance contributes 70% of the total energy,
+  // regardless of how low the remaining 44 bins are.
+  for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 1.0f : 0.0f;
+  float top_energy=0.0f;
+  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f)<0.0001f);
+  assert(std::fabs(top_energy-1.0f)<0.0001f);
+  for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
+  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.30f)<0.0001f);
+  assert(std::fabs(top_energy)<0.0001f);
+  for (size_t i=0;i<48;++i) energy[i]=1.0f;
+  assert(std::fabs(priority.combined_energy(energy,unit_weights)-1.0f)<0.0001f);
+
+  // The four bins have their OWN 3-of-8 confirmation; a single spike is
+  // not enough, and their ON confirmation does not need the 44 others.
+  priority.clear_filter();
+  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  priority.clear_filter(); // a lone spike cannot cross into the next episode
+  assert(!priority.observe(0.0f,8.1f,false,false,0.01f,3.0f));
+  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  assert(priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  assert(priority.confirmations()==1);
+  // After ON, the existing two-peak renewal rule is preserved.
+  assert(!priority.observe(0.03f,8.1f,true,false,0.01f,3.0f));
+  assert(priority.observe(0.03f,8.1f,true,false,0.01f,3.0f));
+  assert(priority.confirmations()==2);
   // Rolling out former hits causes a previously useful bin to return
   // toward neutral, rather than being permanently rewarded or discarded.
   for (unsigned ep=8;ep<16;++ep) varied_episode(varied,varied_now,ep);
@@ -287,5 +330,5 @@ int main() {
   }
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
-  std::puts("C++ 90% weights, gated revisions, rolling transitions, MVS1/MVS3 isolation: PASS");
+  std::puts("C++ MVS3 70/30 priority gate, 90% weights, rolling episodes and MVS1 isolation: PASS");
 }
