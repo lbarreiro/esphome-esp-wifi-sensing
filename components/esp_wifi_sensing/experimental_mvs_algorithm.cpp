@@ -19,6 +19,7 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
       timing_started_ = false;
       for (float &v : accumulator_) v = 0;
       clear_filter_();
+      priority_.reset_after_gap();
     }
     packet_seen_ = true;
     last_packet_ms_ = now_ms;
@@ -67,10 +68,15 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
       static_cast<uint32_t>(now_ms - this->last_motion_time_) >= this->hold_time_ms_) {
     this->motion_state_ = false;
     this->clear_filter_();
+    this->priority_.clear_filter();
   }
 
   const bool above = this->last_score_ >= this->threshold_;
-  const bool confirmed = this->update_filter_(above);
+  const bool global_confirmed = this->update_filter_(above);
+  const bool priority_confirmed = this->priority_.observe(
+      selected_energy_, threshold_, motion_state_, above,
+      quiet_alpha_, quiet_update_limit_);
+  const bool confirmed = global_confirmed || priority_confirmed;
 
   // Equivalent in spirit to Espressif filter_window/filter_count: isolated CSI
   // outliers cannot trigger motion; several jitter excursions inside a short
@@ -80,12 +86,14 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
     this->motion_state_ = true;
     this->last_motion_time_ = now_ms;
     this->clear_filter_();
+    this->priority_.clear_filter();
   }
 
   // Learn only genuinely quiet temporal jitter. A permanent change to the room
   // produces a transient and then becomes quiet automatically; no room baseline
   // reset is required and there is no stale absolute score to retrigger later.
-  if (!above && this->last_score_ < this->quiet_update_limit_) {
+  if (!above && (!priority_.active() || priority_.score() < threshold_) &&
+      this->last_score_ < this->quiet_update_limit_) {
     this->quiet_jitter_ += this->quiet_alpha_ * (jitter - this->quiet_jitter_);
     this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
   }
@@ -93,7 +101,10 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   if (learning_.observe(raw_energy_, now_ms, confirmed, motion_state_)) {
     // Reproject independent raw quiet energy into the new weighted metric.
     // Never mix old-scale jitter/filter history with the new weights.
-    quiet_jitter_ = learning_.quiet_jitter();
+    // Select up to four evidence-qualified bins ONLY on a guarded revision.
+    // With fewer than four, preserve the original 48-bin MVS3 metric.
+    priority_.configure(learning_);
+    quiet_jitter_ = priority_.quiet_jitter(learning_);
     quiet_samples_ = quiet_boot_samples_;
     have_previous_profile_ = false;
     clear_filter_();
@@ -154,16 +165,17 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     return 0.0f;
   }
 
-  float energy = 0.0f;
-  float weight_sum = 0.0f;
   for (size_t i = 0; i < kBins; i++) {
     const float delta = profile[i] - this->previous_profile_[i];
     raw_energy_[i] = delta * delta;
-    energy += learning_.weights()[i] * raw_energy_[i];
-    weight_sum += learning_.weights()[i];
     this->previous_profile_[i] = profile[i];
   }
-  return std::sqrt(energy / weight_sum + JITTER_EPSILON);
+  // Before four qualified bins exist, this is exactly the former 48-bin
+  // weighted average. Once qualified, the top four provide 70% of global
+  // decision energy; the other 44 contribute the remaining 30%.
+  const float energy = priority_.combined_energy(
+      raw_energy_, learning_.weights(), &selected_energy_);
+  return std::sqrt(energy + JITTER_EPSILON);
 }
 
 bool ExperimentalMvsAlgorithm::update_filter_(bool above) {
