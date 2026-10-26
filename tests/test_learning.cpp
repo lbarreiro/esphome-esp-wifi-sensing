@@ -214,6 +214,47 @@ int main() {
   assert(std::fabs(varied.candidate(7)-0.70f)<0.0001f);
   assert(varied.hits(8)==8);
 
+  // In a raw episode the independent validation gate needs six active
+  // bins. Only four of those should become priority bins if two others
+  // vary on every episode; three consistent bins are NOT sufficient.
+  auto run_exact_group = [](unsigned fixed) {
+    CsiLearning learn;
+    uint32_t clock=0;
+    float energy[48]{};
+    for(unsigned k=0;k<3200;++k) {
+      for(size_t i=0;i<48;++i) energy[i]=0.000001f;
+      clock+=100;
+      learn.observe(energy,clock,false,false);
+    }
+    for(unsigned ep=0;ep<8;++ep) {
+      for(unsigned t=0;t<15;++t) {
+        for(size_t i=0;i<48;++i) energy[i]=0.000001f;
+        for(size_t i=0;i<fixed;++i) energy[i]=0.02f;
+        for(size_t j=0;j<6-fixed;++j)
+          energy[fixed+ep*(6-fixed)+j]=0.02f;
+        clock+=100;
+        learn.observe(energy,clock,t==5,true);
+      }
+      for(unsigned t=0;t<65;++t) {
+        for(size_t i=0;i<48;++i) energy[i]=0.000001f;
+        clock+=100;
+        learn.observe(energy,clock,false,false);
+      }
+    }
+    assert(learn.eligible_episodes()==8 && learn.episode_window_count()==8);
+    Mvs3Priority path;
+    path.configure(learn);
+    assert(path.active()==(fixed>=4));
+    if(fixed>=4) {
+      for(size_t i=0;i<4;++i) {
+        assert(path.top_bin(i)<fixed);
+        assert(learn.hits(path.top_bin(i))==8);
+      }
+    }
+  };
+  run_exact_group(3);
+  run_exact_group(4);
+
   // An RF-noisy bin and an isolated spike MUST NOT be credited as motion.
   // Both are observed alongside genuinely responsive bins in eight episodes.
   CsiLearning noisy_hits; uint32_t noisy_hits_now=0;
