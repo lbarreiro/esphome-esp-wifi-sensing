@@ -21,6 +21,24 @@ class CsiLearning {
   }
   const float *weights() const { return weights_; }
   float candidate(size_t i) const { return candidates_[i]; }
+  float quiet_energy(size_t i) const { return quiet_[i]; }
+  // Select by independently validated 5/8 evidence, never by relative rank
+  // alone. No priority path exists until four bins actually qualify.
+  bool select_top_four(size_t (&selected)[4]) const {
+    if (history_count_ < kEpisodeWindow) return false;
+    size_t found = 0;
+    for (size_t i = 0; i < kBins; ++i) {
+      if (hit_counts_[i] < kMinHits || candidates_[i] <= 1.0001f) continue;
+      size_t pos = 0;
+      while (pos < found && (candidates_[selected[pos]] > candidates_[i] ||
+             (candidates_[selected[pos]] == candidates_[i] && selected[pos] < i))) ++pos;
+      if (pos >= 4) continue;
+      if (found < 4) ++found;
+      for (size_t j = found - 1; j > pos; --j) selected[j] = selected[j - 1];
+      selected[pos] = i;
+    }
+    return found == 4;
+  }
   uint32_t quiet_blocks() const { return quiet_blocks_; }
   uint32_t discarded_blocks() const { return discarded_blocks_; }
   uint32_t hold_resets() const { return hold_resets_; }
