@@ -174,14 +174,14 @@ int main() {
   priority.configure(varied);
   assert(priority.active());
   bool selected[48]{};
-  for (size_t j=0;j<4;++j) {
+  for (size_t j=0;j<2;++j) {
     const auto b=priority.top_bin(j);
     assert(b<48 && !selected[b]);
     selected[b]=true;
     assert(varied.hits(b)>=5 && varied.candidate(b)>1.0f);
   }
-  // A top-four-only disturbance contributes 70% of the total energy,
-  // regardless of how low the remaining 44 bins are.
+  // A top-two-only disturbance contributes 70% of the total energy,
+  // regardless of how low the remaining 46 bins are.
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 1.0f : 0.0f;
   float top_energy=0.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f)<0.0001f);
@@ -192,8 +192,17 @@ int main() {
   for (size_t i=0;i<48;++i) energy[i]=1.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights)-1.0f)<0.0001f);
 
-  // The four bins have their OWN 3-of-8 confirmation; a single spike is
-  // not enough, and their ON confirmation does not need the 44 others.
+  // Explicit weighted 70/30 split: internal learned weights change the
+  // average within each group, never the group's 70% / 30% budget.
+  float unequal_weights[48];
+  for (size_t i=0;i<48;++i) unequal_weights[i]=selected[i] ? 1.9f : 0.72f;
+  for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 1.0f : 0.0f;
+  assert(std::fabs(priority.combined_energy(energy,unequal_weights)-0.70f)<0.0001f);
+  for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
+  assert(std::fabs(priority.combined_energy(energy,unequal_weights)-0.30f)<0.0001f);
+
+  // The two bins have their OWN 3-of-8 confirmation; a single spike is
+  // not enough, and their ON confirmation does not need the 46 others.
   priority.clear_filter();
   assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
   priority.clear_filter(); // a lone spike cannot cross into the next episode
@@ -214,9 +223,9 @@ int main() {
   assert(std::fabs(varied.candidate(7)-0.70f)<0.0001f);
   assert(varied.hits(8)==8);
 
-  // In a raw episode the independent validation gate needs six active
-  // bins. Only four of those should become priority bins if two others
-  // vary on every episode; three consistent bins are NOT sufficient.
+  // The raw episode gate still requires six responding bins to learn.
+  // After eight episodes, two consistent bins can become priority bins
+  // even if the other four vary on every episode; one is NOT sufficient.
   auto run_exact_group = [](unsigned fixed) {
     CsiLearning learn;
     uint32_t clock=0;
@@ -244,16 +253,16 @@ int main() {
     assert(learn.eligible_episodes()==8 && learn.episode_window_count()==8);
     Mvs3Priority path;
     path.configure(learn);
-    assert(path.active()==(fixed>=4));
-    if(fixed>=4) {
-      for(size_t i=0;i<4;++i) {
+    assert(path.active()==(fixed>=2));
+    if(fixed>=2) {
+      for(size_t i=0;i<2;++i) {
         assert(path.top_bin(i)<fixed);
         assert(learn.hits(path.top_bin(i))==8);
       }
     }
   };
-  run_exact_group(3);
-  run_exact_group(4);
+  run_exact_group(1);
+  run_exact_group(2);
 
   // An RF-noisy bin and an isolated spike MUST NOT be credited as motion.
   // Both are observed alongside genuinely responsive bins in eight episodes.
@@ -371,5 +380,5 @@ int main() {
   }
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
-  std::puts("C++ MVS3 70/30 priority gate, 90% weights, rolling episodes and MVS1 isolation: PASS");
+  std::puts("C++ MVS3 top-2 70/30 priority gate, 90% weights, rolling episodes and MVS1 isolation: PASS");
 }
