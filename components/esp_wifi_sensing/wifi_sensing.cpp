@@ -211,10 +211,9 @@ void ESPWiFiSensing::loop() {
         ESP_LOGI(TAG, "MVS3 gate eligible=%u skipped=%u prequiet=%u transitions=%u",
           static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
           static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()));
-        ESP_LOGI(TAG, "MVS3 priority active=%u split=70/30 bins=%u,%u,%u,%u score=%.3f confirms=%u",
+        ESP_LOGI(TAG, "MVS3 priority active=%u split=70/30 bins=%u,%u score=%.3f confirms=%u",
           static_cast<unsigned>(priority_active_.load()),
           static_cast<unsigned>(priority_bins_[0].load()), static_cast<unsigned>(priority_bins_[1].load()),
-          static_cast<unsigned>(priority_bins_[2].load()), static_cast<unsigned>(priority_bins_[3].load()),
           priority_score_.load(), static_cast<unsigned>(priority_confirmations_.load()));
       }
     }
@@ -653,7 +652,7 @@ void ESPWiFiSensing::csi_callback_(
         self->priority_active_.store(self->mvs_3_algorithm_.priority_active());
         self->priority_score_.store(self->mvs_3_algorithm_.priority_score());
         self->priority_confirmations_.store(self->mvs_3_algorithm_.priority_confirmations());
-        for (size_t i = 0; i < 4; ++i)
+        for (size_t i = 0; i < 2; ++i)
           self->priority_bins_[i].store(static_cast<uint32_t>(self->mvs_3_algorithm_.priority_bin(i)));
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
