@@ -101,8 +101,8 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   if (learning_.observe(raw_energy_, now_ms, confirmed, motion_state_)) {
     // Reproject independent raw quiet energy into the new weighted metric.
     // Never mix old-scale jitter/filter history with the new weights.
-    // Select up to four evidence-qualified bins ONLY on a guarded revision.
-    // With fewer than four, preserve the original 48-bin MVS3 metric.
+    // Select the two highest evidence-qualified bins ONLY on a guarded revision.
+    // With fewer than two, preserve the original 48-bin MVS3 metric.
     priority_.configure(learning_);
     quiet_jitter_ = priority_.quiet_jitter(learning_);
     quiet_samples_ = quiet_boot_samples_;
@@ -171,8 +171,8 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     this->previous_profile_[i] = profile[i];
   }
   // Before four qualified bins exist, this is exactly the former 48-bin
-  // weighted average. Once qualified, the top four provide 70% of global
-  // decision energy; the other 44 contribute the remaining 30%.
+  // weighted average. Once qualified, the top two provide 70% of global
+  // decision energy; the other 46 contribute the remaining 30%.
   const float energy = priority_.combined_energy(
       raw_energy_, learning_.weights(), &selected_energy_);
   return std::sqrt(energy + JITTER_EPSILON);
