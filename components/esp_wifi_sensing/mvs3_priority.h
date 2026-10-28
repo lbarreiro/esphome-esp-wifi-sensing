@@ -11,10 +11,10 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 // Only the experimental MVS-3 uses this independent decision path.
-// Before four bins qualify, the ordinary weighted 48-bin score is retained.
+// Before two bins qualify, the ordinary weighted 48-bin score is retained.
 class Mvs3Priority {
  public:
-  static constexpr size_t kTop = 4;
+  static constexpr size_t kTop = 2;
   static constexpr size_t kBins = CsiLearning::kBins;
   static constexpr size_t kMaxWindow = 64;
   static constexpr float kTopShare = 0.70f;
@@ -43,7 +43,7 @@ class Mvs3Priority {
   // promoted just because a single fresh episode changes the candidate rank.
   void configure(const CsiLearning &learning) {
     size_t selected[kTop]{};
-    active_ = learning.select_top_four(selected);
+    active_ = learning.select_top_two(selected);
     for (size_t j = 0; j < kTop; ++j) top_[j] = active_ ? selected[j] : 0;
     float top_quiet = 0.0f, top_weight = 0.0f;
     if (active_) {
@@ -59,9 +59,9 @@ class Mvs3Priority {
     clear_filter();
   }
 
-  // Two separately normalized populations, so four genuinely informative
-  // bins have exactly 70% of the decision energy regardless of their old
-  // learned weight relative to the other 44.
+  // Two separately normalized populations: the two evidence-qualified
+  // bins receive 70% of the global decision energy; the other 46 receive
+  // 30%, regardless of their previously learned relative weights.
   float combined_energy(const float *energy, const float *weights, float *selected_energy = nullptr) const {
     float all_energy = 0.0f, all_weight = 0.0f;
     for (size_t i = 0; i < kBins; ++i) {
