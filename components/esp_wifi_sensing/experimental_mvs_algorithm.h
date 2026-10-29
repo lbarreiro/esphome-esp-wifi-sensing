@@ -42,6 +42,10 @@ class ExperimentalMvsAlgorithm {
   Mvs3Priority priority_{};
   float raw_energy_[kBins]{};
   float selected_energy_{0};
+  float normal_jitter_{0.0f};
+  float priority_jitter_{0.0f};
+  bool joint_response_{false};
+  bool using_priority_metric_{false};
   uint32_t last_packet_ms_{0};
   bool packet_seen_{false};
   size_t last_packet_count_{0};
@@ -60,7 +64,10 @@ class ExperimentalMvsAlgorithm {
 
   float previous_profile_[kBins]{};
   bool have_previous_profile_{false};
+  // Keep a separate quiet reference for the ordinary 48-bin metric.
+  // Switching between 70/30 and fallback must never mix metric scales.
   float quiet_jitter_{0.02f};
+  float normal_quiet_jitter_{0.02f};
   uint32_t quiet_samples_{0};
 
   bool filter_[kMaxFilterWindow]{};
