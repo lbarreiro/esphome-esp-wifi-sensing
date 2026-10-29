@@ -67,26 +67,38 @@ the existing rolling `5/8` verified quiet-to-motion recurrence rule. At a
 guarded weight revision, MVS-3 deterministically chooses the two highest
 **qualified** candidates; a tie favors the lower bin index. The selection is
 held constant until a later guarded revision (no changes from isolated new
-episodes). If fewer than two qualify on a subsequent revision, the priority
-path is disabled. In particular, a single qualified bin cannot activate it.
+episodes). However, if either selected bin loses its own 5/8 qualification
+when a new eligible episode changes the rolling window, priority is
+**suspended immediately**, without waiting for a weight revision. Selection
+and reactivation of a replacement pair remain restricted to guarded revisions.
+In particular, a single qualified bin cannot activate it.
 
 Once enabled, global MVS-3 decision energy is
 `0.70 * weighted_mean(energy[top2]) +
 0.30 * weighted_mean(energy[other46])`. Each group is separately normalized
-by its total learned weight. **Before qualification**, the global score is the
+by its total learned weight. This 70/30 metric is used **only on observations
+where BOTH selected bins independently exceed the configured movement
+threshold relative to their own long-term quiet-energy references**. If
+only one selected bin responds, the global decision immediately uses the
+ordinary weighted 48-bin metric. Both metrics maintain separate quiet
+references so changing between them cannot produce artificial threshold
+crossings. **Before qualification**, the global score is likewise the
 original 48-bin weighted mean.
 
 In addition, the two selected bins have their own score, independently
 calibrated using their own learned quiet energies, and an independent rolling
-motion confirmation filter. Like the global filter, this requires three hits
-in eight observations for OFF-to-ON and two in eight to renew ON. The final
+motion confirmation filter. An observation counts as a priority hit
+only if BOTH bins independently respond at that moment AND the joint score
+meets the configured threshold. Like the global filter, this requires three
+hits in eight observations for OFF-to-ON and two in eight to renew ON. The final
 MVS-3 decision is `global_confirmed OR top2_confirmed`; therefore the two
-can trigger ON even when the other 46 are unresponsive. Both paths share the
-same 120-second output hold, but no filter state. Changes of priority
-selection, a CSI gap or a weight revision reset their confirmation history
-rather than causing a synthetic ON. This experiment increases reliance on
-two radio bins and can increase false positives; evaluate against known
-empty-room periods.
+can trigger ON even when the other 46 are unresponsive, but neither can
+trigger the priority path alone. Both paths share the same 120-second
+output hold, but no filter state. Selection changes, priority suspension, CSI
+gaps or weight revisions reset their confirmation history and seed the
+temporal profile to avoid synthetic ON. An existing ON hold is allowed to
+expire normally after suspension. Evaluate real empty-room false positives
+against the unchanged MVS1 reference.
 
 The global MVS3 score (`diag score`) and two-bin score (`priority score`)
 have their own calibrated quiet references and use the configured threshold
@@ -150,9 +162,10 @@ external_components:
 GitHub Actions runs the Python reference regression suite, host C++ tests,
 ESPHome YAML validation, and a full ESP-IDF firmware build.
 The C++ tests verify 90% convergence, bounded weights, quiet-only stability,
-recurrent transitions, top-2 priority qualification and 70/30 weighting,
-independent three-of-eight confirmation, and the independence of MVS1 from
-MVS-3 learning.
+recurrent transitions, top-2 qualification, single-bin noise rejection,
+same-observation joint confirmation, fallback to the calibrated 48-bin
+metric, immediate suspension after loss of 5/8 evidence, revision-only
+reactivation, and the independence of MVS1 from MVS-3 learning.
 
 Build success is not proof of higher real-world detection accuracy. Compare
 the ON/OFF traces of the two sensors against known movement/empty-room periods.
