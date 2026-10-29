@@ -201,19 +201,42 @@ int main() {
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
   assert(std::fabs(priority.combined_energy(energy,unequal_weights)-0.30f)<0.0001f);
 
+  // The two must individually respond within the SAME observation.
+  // One extremely energetic but noisy bin is insufficient for either
+  // independent confirmation OR the global 70/30 path.
+  float individual[48]{};
+  for (size_t i=0;i<48;++i) individual[i]=0.000001f;
+  const auto first_bin=priority.top_bin(0);
+  const auto second_bin=priority.top_bin(1);
+  individual[first_bin]=0.06f;
+  assert(!priority.joint_response(individual,varied,8.1f));
+  assert(std::fabs(priority.combined_energy(individual,unit_weights,nullptr,false)
+                   -priority.combined_energy(individual,unit_weights,nullptr,true))>0.001f);
+  assert(std::fabs(priority.combined_energy(individual,unit_weights,nullptr,false)
+                   -(0.06f+47.0f*0.000001f)/48.0f)<0.00001f);
+  individual[second_bin]=0.06f;
+  assert(priority.joint_response(individual,varied,8.1f));
+  assert(priority.combined_energy(individual,unit_weights,nullptr,true)>
+         priority.combined_energy(individual,unit_weights,nullptr,false));
+
   // The two bins have their OWN 3-of-8 confirmation; a single spike is
   // not enough, and their ON confirmation does not need the 46 others.
+  // Even repeated strong energy cannot pass if only one bin responded.
   priority.clear_filter();
-  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  for (unsigned i=0;i<12;++i)
+    assert(!priority.observe(0.06f,8.1f,false,false,false,0.01f,3.0f));
+  assert(priority.confirmations()==0);
+  priority.clear_filter();
+  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
   priority.clear_filter(); // a lone spike cannot cross into the next episode
-  assert(!priority.observe(0.0f,8.1f,false,false,0.01f,3.0f));
-  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
-  assert(!priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
-  assert(priority.observe(0.03f,8.1f,false,false,0.01f,3.0f));
+  assert(!priority.observe(0.0f,8.1f,false,true,false,0.01f,3.0f));
+  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
+  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
+  assert(priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
   assert(priority.confirmations()==1);
   // After ON, the existing two-peak renewal rule is preserved.
-  assert(!priority.observe(0.03f,8.1f,true,false,0.01f,3.0f));
-  assert(priority.observe(0.03f,8.1f,true,false,0.01f,3.0f));
+  assert(!priority.observe(0.03f,8.1f,true,true,false,0.01f,3.0f));
+  assert(priority.observe(0.03f,8.1f,true,true,false,0.01f,3.0f));
   assert(priority.confirmations()==2);
   // Rolling out former hits causes a previously useful bin to return
   // toward neutral, rather than being permanently rewarded or discarded.
@@ -259,6 +282,34 @@ int main() {
         assert(path.top_bin(i)<fixed);
         assert(learn.hits(path.top_bin(i))==8);
       }
+      // The selected two stop responding, but other bins now qualify.
+      // Suspension happens as soon as fresh episode votes disqualify one
+      // selected bin, without waiting for a new revision.
+      bool suspended=false;
+      const uint32_t revision_at_selection=learn.revisions();
+      for(unsigned ep=0;ep<8;++ep) {
+        for(unsigned t=0;t<15;++t) {
+          for(size_t i=0;i<48;++i) energy[i]=0.000001f;
+          for(size_t i=12;i<18;++i) energy[i]=0.02f;
+          clock+=100;
+          learn.observe(energy,clock,t==5,true);
+          suspended |= path.suspend_if_unqualified(learn);
+        }
+        for(unsigned t=0;t<65;++t) {
+          for(size_t i=0;i<48;++i) energy[i]=0.000001f;
+          clock+=100;
+          learn.observe(energy,clock,false,false);
+          suspended |= path.suspend_if_unqualified(learn);
+        }
+      }
+      assert(suspended && !path.active());
+      assert(path.top_bin(0)==0 && path.top_bin(1)==0);
+      assert(learn.revisions()==revision_at_selection);
+      assert(learn.recurrent_bins()>=2);
+      // New qualified bins cannot silently reactivate before configure().
+      assert(!path.suspend_if_unqualified(learn) && !path.active());
+      path.configure(learn);
+      assert(path.active() && path.top_bin(0)>=12 && path.top_bin(1)>=12);
     }
   };
   run_exact_group(1);
