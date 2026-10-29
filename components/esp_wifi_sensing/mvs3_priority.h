@@ -102,7 +102,7 @@ class Mvs3Priority {
       all_energy += energy[i] * weights[i];
       all_weight += weights[i];
     }
-    if (!active_ || !allow_priority) {
+    if (!active_) {
       if (selected_energy != nullptr) *selected_energy = 0.0f;
       return all_energy / all_weight;
     }
@@ -115,6 +115,9 @@ class Mvs3Priority {
     const float top_mean = top_energy / top_weight;
     const float other_mean = std::max(0.0f, all_energy - top_energy) / (all_weight - top_weight);
     if (selected_energy != nullptr) *selected_energy = top_mean;
+    // Keep the two-bin diagnostic/quiet update fed even when only one bin
+    // reacts; the actual global decision safely falls back to all 48 bins.
+    if (!allow_priority) return all_energy / all_weight;
     return kTopShare * top_mean + kOtherShare * other_mean;
   }
 
