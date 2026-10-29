@@ -39,6 +39,39 @@ class Mvs3Priority {
     score_ = 0;
   }
 
+  // Loss of 5/8 recurrence is acted upon at the end of the NEW eligible
+  // episode, not deferred until the next weight revision. The selector may
+  // reactivate ONLY in configure(), at a guarded revision.
+  bool suspend_if_unqualified(const CsiLearning &learning) {
+    if (!active_) return false;
+    bool qualified = learning.episode_window_count() == CsiLearning::kEpisodeWindow;
+    for (size_t j = 0; j < kTop; ++j) {
+      const size_t i = top_[j];
+      qualified = qualified && learning.hits(i) >= CsiLearning::kMinHits &&
+                  learning.candidate(i) > 1.0001f;
+    }
+    if (qualified) return false;
+    active_ = false;
+    for (size_t j = 0; j < kTop; ++j) top_[j] = 0;
+    reset_after_gap();
+    return true;
+  }
+
+  // Both priority bins must show individual signal energy substantially above
+  // their OWN learned quiet energy in the SAME observation. One strong noisy
+  // bin cannot authorize either priority decision path.
+  bool joint_response(const float *energy, const CsiLearning &learning, float threshold) const {
+    if (!active_) return false;
+    for (size_t j = 0; j < kTop; ++j) {
+      const size_t i = top_[j];
+      const float quiet = std::sqrt(learning.quiet_energy(i) + kEpsilon);
+      const float current = std::sqrt(energy[i] + kEpsilon);
+      const float individual_score = 2.0f * current / std::max(quiet, kQuietFloor);
+      if (!(individual_score >= threshold)) return false;
+    }
+    return true;
+  }
+
   // Selection occurs only at a guarded learning revision. It cannot be
   // promoted just because a single fresh episode changes the candidate rank.
   void configure(const CsiLearning &learning) {
@@ -62,13 +95,14 @@ class Mvs3Priority {
   // Two separately normalized populations: the two evidence-qualified
   // bins receive 70% of the global decision energy; the other 46 receive
   // 30%, regardless of their previously learned relative weights.
-  float combined_energy(const float *energy, const float *weights, float *selected_energy = nullptr) const {
+  float combined_energy(const float *energy, const float *weights, float *selected_energy = nullptr,
+                        bool allow_priority = true) const {
     float all_energy = 0.0f, all_weight = 0.0f;
     for (size_t i = 0; i < kBins; ++i) {
       all_energy += energy[i] * weights[i];
       all_weight += weights[i];
     }
-    if (!active_) {
+    if (!active_ || !allow_priority) {
       if (selected_energy != nullptr) *selected_energy = 0.0f;
       return all_energy / all_weight;
     }
@@ -92,12 +126,12 @@ class Mvs3Priority {
 
   // Independent confirmation window. This path may trigger even if the
   // global 70/30 metric is below threshold. It uses its OWN quiet reference.
-  bool observe(float selected_energy, float threshold, bool held,
+  bool observe(float selected_energy, float threshold, bool held, bool joint_response,
                bool global_above, float quiet_alpha, float quiet_update_limit) {
     if (!active_) { score_ = 0; return false; }
     const float jitter = std::sqrt(selected_energy + kEpsilon);
     score_ = 2.0f * jitter / std::max(quiet_jitter_, kQuietFloor);
-    const bool above = score_ >= threshold;
+    const bool above = joint_response && score_ >= threshold;
     if (filter_[next_]) --hits_;
     filter_[next_] = above;
     if (above) ++hits_;
