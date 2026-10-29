@@ -49,11 +49,15 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   // Espressif's motion path is based on CSI waveform jitter, not distance from
   // a long-lived room baseline. Normalise current temporal jitter by the quiet
   // jitter floor so the existing threshold remains a dimensionless sensitivity.
-  this->last_score_ = 2.0f * jitter / std::max(this->quiet_jitter_, QUIET_FLOOR);
+  // The 70/30 and ordinary 48-bin metrics have different energy scales.
+  // Compare each only with its own quiet reference.
+  const float &quiet_reference = using_priority_metric_ ? quiet_jitter_ : normal_quiet_jitter_;
+  this->last_score_ = 2.0f * jitter / std::max(quiet_reference, QUIET_FLOOR);
 
   if (this->quiet_samples_ < this->quiet_boot_samples_) {
     this->quiet_jitter_ += (jitter - this->quiet_jitter_) / static_cast<float>(this->quiet_samples_ + 1);
     this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
+    this->normal_quiet_jitter_ = this->quiet_jitter_;
     this->quiet_samples_++;
     learning_.observe(raw_energy_, now_ms, false, false);
     this->clear_filter_();
@@ -74,7 +78,7 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   const bool above = this->last_score_ >= this->threshold_;
   const bool global_confirmed = this->update_filter_(above);
   const bool priority_confirmed = this->priority_.observe(
-      selected_energy_, threshold_, motion_state_, above,
+      selected_energy_, threshold_, motion_state_, joint_response_, above,
       quiet_alpha_, quiet_update_limit_);
   const bool confirmed = global_confirmed || priority_confirmed;
 
@@ -92,20 +96,45 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   // Learn only genuinely quiet temporal jitter. A permanent change to the room
   // produces a transient and then becomes quiet automatically; no room baseline
   // reset is required and there is no stale absolute score to retrigger later.
-  if (!above && (!priority_.active() || priority_.score() < threshold_) &&
-      this->last_score_ < this->quiet_update_limit_) {
-    this->quiet_jitter_ += this->quiet_alpha_ * (jitter - this->quiet_jitter_);
-    this->quiet_jitter_ = std::max(this->quiet_jitter_, QUIET_FLOOR);
+  if (!above && (!priority_.active() || priority_.score() < threshold_)) {
+    const float normal_score = 2.0f * normal_jitter_ /
+        std::max(normal_quiet_jitter_, QUIET_FLOOR);
+    if (normal_score < quiet_update_limit_) {
+      normal_quiet_jitter_ += quiet_alpha_ * (normal_jitter_ - normal_quiet_jitter_);
+      normal_quiet_jitter_ = std::max(normal_quiet_jitter_, QUIET_FLOOR);
+    }
+    if (priority_.active()) {
+      const float weighted_score = 2.0f * priority_jitter_ /
+          std::max(quiet_jitter_, QUIET_FLOOR);
+      if (weighted_score < quiet_update_limit_) {
+        quiet_jitter_ += quiet_alpha_ * (priority_jitter_ - quiet_jitter_);
+        quiet_jitter_ = std::max(quiet_jitter_, QUIET_FLOOR);
+      }
+    } else {
+      quiet_jitter_ = normal_quiet_jitter_;
+    }
   }
 
-  if (learning_.observe(raw_energy_, now_ms, confirmed, motion_state_)) {
+  const bool revised = learning_.observe(raw_energy_, now_ms, confirmed, motion_state_);
+  if (revised) {
     // Reproject independent raw quiet energy into the new weighted metric.
     // Never mix old-scale jitter/filter history with the new weights.
     // Select the two highest evidence-qualified bins ONLY on a guarded revision.
     // With fewer than two, preserve the original 48-bin MVS3 metric.
     priority_.configure(learning_);
+    normal_quiet_jitter_ = learning_.quiet_jitter();
     quiet_jitter_ = priority_.quiet_jitter(learning_);
     quiet_samples_ = quiet_boot_samples_;
+    have_previous_profile_ = false;
+    clear_filter_();
+    last_score_ = 0;
+  } else if (priority_.suspend_if_unqualified(learning_)) {
+    // Candidates changed at an eligible episode before any new revision.
+    // Disable stale priority immediately and return to the 48-bin scale.
+    // Preserve existing ON hold but flush filters/profile to prevent a
+    // synthetic detection when the score scale changes.
+    normal_quiet_jitter_ = learning_.quiet_jitter();
+    quiet_jitter_ = normal_quiet_jitter_;
     have_previous_profile_ = false;
     clear_filter_();
     last_score_ = 0;
@@ -162,6 +191,9 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
   if (!this->have_previous_profile_) {
     for (size_t i = 0; i < kBins; i++) this->previous_profile_[i] = profile[i];
     this->have_previous_profile_ = true;
+    normal_jitter_ = priority_jitter_ = 0.0f;
+    selected_energy_ = 0.0f;
+    joint_response_ = using_priority_metric_ = false;
     return 0.0f;
   }
 
@@ -170,12 +202,18 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     raw_energy_[i] = delta * delta;
     this->previous_profile_[i] = profile[i];
   }
-  // Before four qualified bins exist, this is exactly the former 48-bin
-  // weighted average. Once qualified, the top two provide 70% of global
-  // decision energy; the other 46 contribute the remaining 30%.
-  const float energy = priority_.combined_energy(
-      raw_energy_, learning_.weights(), &selected_energy_);
-  return std::sqrt(energy + JITTER_EPSILON);
+  // Never apply the 70/30 weights when only one of the two priority
+  // subcarriers reacts. Both must independently clear their own quiet-based
+  // movement threshold in this SAME observation.
+  joint_response_ = priority_.joint_response(raw_energy_, learning_, threshold_);
+  using_priority_metric_ = priority_.active() && joint_response_;
+  const float normal_energy = priority_.combined_energy(
+      raw_energy_, learning_.weights(), nullptr, false);
+  const float priority_energy = priority_.combined_energy(
+      raw_energy_, learning_.weights(), &selected_energy_, true);
+  normal_jitter_ = std::sqrt(normal_energy + JITTER_EPSILON);
+  priority_jitter_ = std::sqrt(priority_energy + JITTER_EPSILON);
+  return using_priority_metric_ ? priority_jitter_ : normal_jitter_;
 }
 
 bool ExperimentalMvsAlgorithm::update_filter_(bool above) {
