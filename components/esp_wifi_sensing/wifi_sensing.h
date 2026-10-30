@@ -145,6 +145,12 @@ class ESPWiFiSensing : public Component {
   ExperimentalMvsAlgorithm mvs_3_algorithm_{};
   std::atomic<uint32_t> mvs_3_last_confirmation_ms_{0};
   std::atomic<bool> mvs_3_confirmation_seen_{false};
+  // Diagnostic-only: 0=none, 1=global48, 2=global70, 3=Top2, 4=both.
+  std::atomic<uint32_t> mvs_3_last_confirmation_route_{0};
+  std::atomic<uint32_t> mvs_3_scored_observations_{0};
+  std::atomic<uint32_t> mvs_3_priority_metric_observations_{0};
+  uint32_t mvs_3_prev_scored_log_{0};
+  uint32_t mvs_3_prev_priority_log_{0};
   bool mvs_3_published_state_{false};
   bool mvs_3_initial_state_published_{false};
   // Scalar atomic snapshots: loop never reads callback-owned learner memory.
