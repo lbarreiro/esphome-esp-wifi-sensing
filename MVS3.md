@@ -63,15 +63,22 @@ temporal jump. This does not recalibrate or reset MVS1.
 ## Two-bin priority (70/30)
 
 The priority decision is **inactive** until at least two bins qualify under
-the existing rolling `5/8` verified quiet-to-motion recurrence rule. At a
-guarded weight revision, MVS-3 deterministically chooses the two highest
-**qualified** candidates; a tie favors the lower bin index. The selection is
-held constant until a later guarded revision (no changes from isolated new
-episodes). However, if either selected bin loses its own 5/8 qualification
-when a new eligible episode changes the rolling window, priority is
-**suspended immediately**, without waiting for a weight revision. Selection
-and reactivation of a replacement pair remain restricted to guarded revisions.
-In particular, a single qualified bin cannot activate it.
+the existing rolling `5/8` verified quiet-to-motion recurrence rule. At the
+end of every **new eligible movement episode**, MVS-3 chooses the two highest
+**qualified** candidates; a tie favors the lower bin index. Selection no
+longer waits for a guarded weight revision: `rev` only updates the learned
+weights. When either selected bin falls below 5/8, MVS-3 immediately replaces
+the pair if two qualified alternatives exist; otherwise the 70/30 priority is
+disabled and the ordinary weighted 48-bin detector remains active.
+A previously disabled priority automatically reactivates as soon as two
+qualify, without waiting for a revision. A single qualified bin is not enough.
+When both currently selected bins **remain qualified**, a replacement pair
+must beat the current pair's weakest candidate by at least 0.05 and stay
+best-ranked for **two consecutive eligible episodes**, avoiding frequent
+switches from small ranking fluctuations. No changes occur during silence
+alone. A selection change clears MVS-3's temporal profile and confirmation
+filters and recalibrates its own quiet references, without resetting the
+existing 120-second ON hold or any MVS1 state.
 
 Once enabled, global MVS-3 decision energy is
 `0.70 * weighted_mean(energy[top2]) +
@@ -108,22 +115,34 @@ The 70/30 percentages apply to the **two groups' decision energy**, not
 to the individual learning coefficients. There are still 48 learned weights
 and all 48 bins contribute to the global decision.
 
-## Logs
+## Readable minute-by-minute logs
 
-* `MVS3 learn q=... ep=... reject=... rev=... hi=bin:candidate/weight lo=...`
-* `MVS3 diag obs=... held=... score=... energy=... limit=... rawquiet=...`
-* `MVS3 bins win=8/8 hit5=... up=... strong=... weak=... mean=...`
-* `MVS3 gate eligible=... skipped=... prequiet=... transitions=...`
-* `MVS3 priority active=... split=70/30 bins=a,b score=... confirms=...`
+The existing **60-second interval** is preserved. Instead of scattering
+information across five differently ordered lines, every minute prints
+four consistently ordered lines:
 
-`active=0` means the 48-bin metric is still used and no priority confirmation
-is attempted. `active=1` means two qualified bins were selected at a
-revision; `confirms` counts confirmations from that path, including renewals.
-A low global score does **not** preclude motion when the priority score
-and its own filter confirm ON.
+1. `MVS3 TOP`: 70/30 ON/OFF, selected bin numbers, each bin's individual
+   `hits=N/8`, candidate `c` and applied learned weight `w`,
+   count of 5/8-qualified bins, window and latest weight revision.
+   When OFF, explicitly says `48-bin fallback`.
+2. `MVS3 RANK`: strongest/weakest candidates (whether selected or not),
+   their hits/candidate/weight, promoted/strong/weak counts and mean.
+   These rankings can differ from the selected pair while hysteresis is
+   protecting against churn; `hi` does not mean an active priority bin.
+3. `MVS3 LEARN`: total episodes, eligible and skipped episodes, rejected
+   episodes, quiet blocks, prequiet/transition bins and latest 10x/256x
+   contrast counts.
+4. `MVS3 SIGNAL`: held ON state, current global and independent priority
+   scores, cumulative priority confirmations, raw-quiet/energy threshold,
+   observations, quiet-block quality, discarded blocks, hold resets and gaps.
 
-The main ESPHome loop reads atomic snapshots of MVS-3 diagnostics; it never
-directly reads or mutates callback-owned learning arrays.
+Individual Top 2 hits are from the last eight eligible episodes.
+`c` is the latest candidate score, `w` is the last committed
+weight (`rev`); these values **can legitimately differ**.
+`qualified` means the number of carriers meeting 5/8, not the
+number of eligible episodes. `confirms` includes hold renewals,
+not just distinct human movements. Motion ON/OFF event logs and the
+separate cumulative CSI packet counters remain unchanged.
 
 ## Update YAML
 
@@ -164,8 +183,8 @@ ESPHome YAML validation, and a full ESP-IDF firmware build.
 The C++ tests verify 90% convergence, bounded weights, quiet-only stability,
 recurrent transitions, top-2 qualification, single-bin noise rejection,
 same-observation joint confirmation, fallback to the calibrated 48-bin
-metric, immediate suspension after loss of 5/8 evidence, revision-only
-reactivation, and the independence of MVS1 from MVS-3 learning.
+metric, automatic replacement/reactivation after eligible episodes without
+a weight revision, and the independence of MVS1 from MVS-3 learning.
 
 Build success is not proof of higher real-world detection accuracy. Compare
 the ON/OFF traces of the two sensors against known movement/empty-room periods.
