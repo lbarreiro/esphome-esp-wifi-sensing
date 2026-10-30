@@ -25,6 +25,12 @@ class ExperimentalMvsAlgorithm {
   float priority_score() const { return priority_.score(); }
   uint32_t priority_confirmations() const { return priority_.confirmations(); }
   size_t priority_bin(size_t i) const { return priority_.top_bin(i); }
+  // The last confirmation route is kept even if the ON hold expires.
+  // 0=none, 1=global 48-bin, 2=global 70/30, 3=independent Top2, 4=both.
+  uint8_t last_confirmation_route() const { return last_confirmation_route_; }
+  // Cumulative counters, to be diffed by the ESPHome loop once per minute.
+  uint32_t scored_observations() const { return scored_observations_; }
+  uint32_t priority_metric_observations() const { return priority_metric_observations_; }
 
   static constexpr size_t kBins = 48;
   static constexpr size_t kMaxFilterWindow = 64;
@@ -46,6 +52,8 @@ class ExperimentalMvsAlgorithm {
   float priority_jitter_{0.0f};
   bool joint_response_{false};
   bool using_priority_metric_{false};
+  uint8_t last_confirmation_route_{0};
+  uint32_t scored_observations_{0}, priority_metric_observations_{0};
   uint32_t last_packet_ms_{0};
   bool packet_seen_{false};
   size_t last_packet_count_{0};
