@@ -87,6 +87,11 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   // window are required. Once confirmed, consume that window so a static RF
   // offset cannot repeatedly retrigger the 120 s hold.
   if (confirmed) {
+    // Track what really refreshed the 120-second hold. The global path
+    // may be using either its 48-bin fallback or the joint-gated 70/30 metric.
+    // Last route is diagnostic-only; it does not affect motion decisions.
+    last_confirmation_route_ = (global_confirmed && priority_confirmed) ? 4 :
+        priority_confirmed ? 3 : (using_priority_metric_ ? 2 : 1);
     this->motion_state_ = true;
     this->last_motion_time_ = now_ms;
     this->clear_filter_();
@@ -198,6 +203,8 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
   // movement threshold in this SAME observation.
   joint_response_ = priority_.joint_response(raw_energy_, learning_, threshold_);
   using_priority_metric_ = priority_.active() && joint_response_;
+  ++scored_observations_;
+  if (using_priority_metric_) ++priority_metric_observations_;
   const float normal_energy = priority_.combined_energy(
       raw_energy_, learning_.weights(), nullptr, false);
   const float priority_energy = priority_.combined_energy(
