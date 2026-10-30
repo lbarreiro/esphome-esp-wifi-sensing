@@ -39,21 +39,81 @@ class Mvs3Priority {
     score_ = 0;
   }
 
-  // Loss of 5/8 recurrence is acted upon at the end of the NEW eligible
-  // episode, not deferred until the next weight revision. The selector may
-  // reactivate ONLY in configure(), at a guarded revision.
-  bool suspend_if_unqualified(const CsiLearning &learning) {
-    if (!active_) return false;
-    bool qualified = learning.episode_window_count() == CsiLearning::kEpisodeWindow;
-    for (size_t j = 0; j < kTop; ++j) {
-      const size_t i = top_[j];
-      qualified = qualified && learning.hits(i) >= CsiLearning::kMinHits &&
-                  learning.candidate(i) > 1.0001f;
+  // The episode window, not the weight revision, controls priority membership.
+  // Run only after NEW eligible evidence (or after a weight revision).
+  // A disqualified bin is replaced immediately if two alternatives qualify;
+  // otherwise the priority path falls back to the weighted 48-bin metric.
+  // When both old bins still qualify, a challenger must exceed the weakest
+  // current candidate by 0.05 for TWO consecutive eligible episodes.
+  // This prevents small ranking oscillations from churning the Top 2.
+  // Returns true only when membership or activation actually changes.
+  bool refresh(const CsiLearning &learning, bool weights_changed = false) {
+    const uint32_t eligible = learning.eligible_episodes();
+    const bool new_episode = eligible != last_eligible_episodes_;
+    if (!new_episode && !weights_changed) return false;
+    last_eligible_episodes_ = eligible;
+
+    size_t best[kTop]{};
+    const bool enough = learning.select_top_two(best);
+    if (!enough) {
+      pending_count_ = 0;
+      if (!active_) return false;
+      active_ = false;
+      for (size_t j = 0; j < kTop; ++j) top_[j] = 0;
+      recalibrate_(learning);
+      return true;
     }
-    if (qualified) return false;
-    active_ = false;
-    for (size_t j = 0; j < kTop; ++j) top_[j] = 0;
-    reset_after_gap();
+
+    const bool same_pair = active_ &&
+        ((top_[0] == best[0] && top_[1] == best[1]) ||
+         (top_[0] == best[1] && top_[1] == best[0]));
+    if (same_pair) {
+      // Update displayed ranking without resetting the detection filter.
+      top_[0] = best[0];
+      top_[1] = best[1];
+      pending_count_ = 0;
+      if (weights_changed) recalibrate_(learning);
+      return false;
+    }
+
+    bool old_qualified = active_;
+    if (active_) {
+      for (size_t j = 0; j < kTop; ++j) {
+        const size_t i = top_[j];
+        old_qualified = old_qualified &&
+            learning.hits(i) >= CsiLearning::kMinHits &&
+            learning.candidate(i) > 1.0001f;
+      }
+    }
+    if (old_qualified) {
+      // Only consider a better-ranked pair if the improvement is meaningful
+      // and verified in successive independent episodes.
+      if (!new_episode ||
+          learning.candidate(best[1]) < std::min(learning.candidate(top_[0]),
+                                                learning.candidate(top_[1])) + 0.05f) {
+        pending_count_ = 0;
+        if (weights_changed) recalibrate_(learning);
+        return false;
+      }
+      if (pending_count_ != 0 && pending_[0] == best[0] && pending_[1] == best[1]) {
+        ++pending_count_;
+      } else {
+        pending_[0] = best[0];
+        pending_[1] = best[1];
+        pending_count_ = 1;
+      }
+      if (pending_count_ < 2) {
+        if (weights_changed) recalibrate_(learning);
+        return false;
+      }
+    }
+
+    // First valid pair, or replacement of an invalid pair: no extra delay.
+    active_ = true;
+    top_[0] = best[0];
+    top_[1] = best[1];
+    pending_count_ = 0;
+    recalibrate_(learning);
     return true;
   }
 
@@ -70,26 +130,6 @@ class Mvs3Priority {
       if (!(individual_score >= threshold)) return false;
     }
     return true;
-  }
-
-  // Selection occurs only at a guarded learning revision. It cannot be
-  // promoted just because a single fresh episode changes the candidate rank.
-  void configure(const CsiLearning &learning) {
-    size_t selected[kTop]{};
-    active_ = learning.select_top_two(selected);
-    for (size_t j = 0; j < kTop; ++j) top_[j] = active_ ? selected[j] : 0;
-    float top_quiet = 0.0f, top_weight = 0.0f;
-    if (active_) {
-      for (size_t j = 0; j < kTop; ++j) {
-        const size_t i = top_[j];
-        top_quiet += learning.quiet_energy(i) * learning.weights()[i];
-        top_weight += learning.weights()[i];
-      }
-      top_quiet /= top_weight;
-    }
-    quiet_jitter_ = std::sqrt(top_quiet + kEpsilon);
-    score_ = 0;
-    clear_filter();
   }
 
   // Two separately normalized populations: the two evidence-qualified
@@ -153,7 +193,25 @@ class Mvs3Priority {
   }
 
  private:
+  void recalibrate_(const CsiLearning &learning) {
+    float top_quiet = 0.0f, top_weight = 0.0f;
+    if (active_) {
+      for (size_t j = 0; j < kTop; ++j) {
+        const size_t i = top_[j];
+        top_quiet += learning.quiet_energy(i) * learning.weights()[i];
+        top_weight += learning.weights()[i];
+      }
+      top_quiet /= top_weight;
+    }
+    quiet_jitter_ = std::sqrt(top_quiet + kEpsilon);
+    score_ = 0.0f;
+    clear_filter();
+  }
+
   size_t top_[kTop]{};
+  size_t pending_[kTop]{};
+  uint8_t pending_count_{0};
+  uint32_t last_eligible_episodes_{0};
   bool active_{false};
   bool filter_[kMaxWindow]{};
   size_t window_{8}, next_{0};
