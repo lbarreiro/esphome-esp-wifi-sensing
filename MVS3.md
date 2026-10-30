@@ -115,34 +115,54 @@ The 70/30 percentages apply to the **two groups' decision energy**, not
 to the individual learning coefficients. There are still 48 learned weights
 and all 48 bins contribute to the global decision.
 
-## Readable minute-by-minute logs
+## Large topic headers, every 60 seconds
 
-The existing **60-second interval** is preserved. Instead of scattering
-information across five differently ordered lines, every minute prints
-four consistently ordered lines:
+The existing **60-second interval** is preserved. Topic names are in uppercase
+and surrounded by `===` to be readable in plain ESPHome logs. The firmware
+does **not** control the font size in the ESPHome log viewer.
 
-1. `MVS3 TOP`: 70/30 ON/OFF, selected bin numbers, each bin's individual
-   `hits=N/8`, candidate `c` and applied learned weight `w`,
-   count of 5/8-qualified bins, window and latest weight revision.
-   When OFF, explicitly says `48-bin fallback`.
-2. `MVS3 RANK`: strongest/weakest candidates (whether selected or not),
-   their hits/candidate/weight, promoted/strong/weak counts and mean.
-   These rankings can differ from the selected pair while hysteresis is
-   protecting against churn; `hi` does not mean an active priority bin.
-3. `MVS3 LEARN`: total episodes, eligible and skipped episodes, rejected
-   episodes, quiet blocks, prequiet/transition bins and latest 10x/256x
-   contrast counts.
-4. `MVS3 SIGNAL`: held ON state, current global and independent priority
-   scores, cumulative priority confirmations, raw-quiet/energy threshold,
-   observations, quiet-block quality, discarded blocks, hold resets and gaps.
+1. `MVS3 === ESTADO:`: currently published movement ON/OFF; whether a
+   **qualified Top 2 is available** (not synonymous with applying 70%);
+   how many seconds since the last actual confirmation; that confirmation's
+   route (`GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS`, or `SEM`);
+   and `70_USADO=A/B (P%)`, the **A observations in the last minute**
+   that actually applied 70/30 out of B scored observations. When no
+   movement has ever been confirmed, the last confirmation says `SEM`.
+2. `MVS3 === TOP 2:`: selected bin numbers, each bin's hits out of 8,
+   candidate (`cand`) and committed learned weight (`peso`).
+   Also the number of 5/8-qualified bins and eligible episode window.
+   When no pair is qualified it says `INATIVO (48 PORTADORAS)`.
+3. `MVS3 === MIN/MAX:`: best and worst current candidate bins,
+   recurrence, candidate, weight, and promotion/quality counts.
+   Because hysteresis stabilizes the selected pair, the best candidate
+   can differ from a selected Top 2 bin.
+4. `MVS3 === APRENDIZAGEM:`: committed weight revision `rev`,
+   accepted/eligible/skipped/rejected episodes, accepted quiet blocks,
+   and latest prequiet/transition/10x/256x counts.
+5. `MVS3 === DIAGNOSTICO:`: global and independent Top 2 scores,
+   cumulative priority confirmations, retained motion state, raw quiet
+   classification, observed energy and limit, sample counts, dropped
+   blocks, hold resets and CSI discontinuities.
 
-Individual Top 2 hits are from the last eight eligible episodes.
-`c` is the latest candidate score, `w` is the last committed
-weight (`rev`); these values **can legitimately differ**.
-`qualified` means the number of carriers meeting 5/8, not the
-number of eligible episodes. `confirms` includes hold renewals,
-not just distinct human movements. Motion ON/OFF event logs and the
-separate cumulative CSI packet counters remain unchanged.
+The event log for a transition to ON or OFF is also labeled `ESTADO` and
+includes the last detection route and the existing 120-second hold. A global
+confirmation is labeled `GLOBAL70` if 70/30 was applied to the confirming
+observation, or `GLOBAL48` when the 48-bin metric was used.
+`AMBOS` means the global and independent priority paths confirmed
+simultaneously. This is the **last** confirmed route, not a guarantee that
+the current observation is still above the movement threshold.
+
+Individual Top 2 hits are from the last eight eligible episodes;
+`cand` can differ from `peso` because the latter changes only at `rev`.
+The number of qualified bins counts bins meeting the 5/8 rule, not
+eligible episodes. The cumulative `confirms` count includes hold renewals,
+not just distinct human movements. The independent CSI packet-length
+diagnostic is unchanged.
+
+A large percentage of `70_USADO` means more observations where the
+two selected bins simultaneously passed their individual gate, **not**
+necessarily higher human detection accuracy. It can be zero even while
+the Top 2 pair stays qualified.
 
 ## Update YAML
 
