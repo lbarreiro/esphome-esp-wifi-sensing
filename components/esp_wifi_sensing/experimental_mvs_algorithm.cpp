@@ -116,25 +116,16 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   }
 
   const bool revised = learning_.observe(raw_energy_, now_ms, confirmed, motion_state_);
-  if (revised) {
-    // Reproject independent raw quiet energy into the new weighted metric.
-    // Never mix old-scale jitter/filter history with the new weights.
-    // Select the two highest evidence-qualified bins ONLY on a guarded revision.
-    // With fewer than two, preserve the original 48-bin MVS3 metric.
-    priority_.configure(learning_);
+  // Refresh the priority pair on new eligible episodes, independently of
+  // guarded weight revisions. An invalid pair is replaced immediately if two
+  // qualified bins exist; a merely better pair requires stable evidence.
+  const bool selection_changed = priority_.refresh(learning_, revised);
+  if (revised || selection_changed) {
+    // A change of bins OR weights changes the effective score scale. Reset
+    // MVS3's own profiles/filters; preserve the current 120-second ON hold.
     normal_quiet_jitter_ = learning_.quiet_jitter();
     quiet_jitter_ = priority_.quiet_jitter(learning_);
     quiet_samples_ = quiet_boot_samples_;
-    have_previous_profile_ = false;
-    clear_filter_();
-    last_score_ = 0;
-  } else if (priority_.suspend_if_unqualified(learning_)) {
-    // Candidates changed at an eligible episode before any new revision.
-    // Disable stale priority immediately and return to the 48-bin scale.
-    // Preserve existing ON hold but flush filters/profile to prevent a
-    // synthetic detection when the score scale changes.
-    normal_quiet_jitter_ = learning_.quiet_jitter();
-    quiet_jitter_ = normal_quiet_jitter_;
     have_previous_profile_ = false;
     clear_filter_();
     last_score_ = 0;
