@@ -166,12 +166,12 @@ int main() {
 
   // Priority is never enabled with an incomplete or unqualified episode window.
   Mvs3Priority priority;
-  priority.configure(CsiLearning{});
+  assert(!priority.refresh(CsiLearning{}));
   assert(!priority.active());
   float energy[48]{}, unit_weights[48]{};
   for (size_t i=0;i<48;++i) unit_weights[i]=1.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights))<0.00001f);
-  priority.configure(varied);
+  assert(priority.refresh(varied));
   assert(priority.active());
   bool selected[48]{};
   for (size_t j=0;j<2;++j) {
@@ -275,17 +275,18 @@ int main() {
     }
     assert(learn.eligible_episodes()==8 && learn.episode_window_count()==8);
     Mvs3Priority path;
-    path.configure(learn);
+    assert(path.refresh(learn)==(fixed>=2));
     assert(path.active()==(fixed>=2));
     if(fixed>=2) {
       for(size_t i=0;i<2;++i) {
         assert(path.top_bin(i)<fixed);
         assert(learn.hits(path.top_bin(i))==8);
       }
-      // The selected two stop responding, but other bins now qualify.
-      // Suspension happens as soon as fresh episode votes disqualify one
-      // selected bin, without waiting for a new revision.
-      bool suspended=false;
+      // Next eight eligible episodes respond only on a NEW pair.
+      // The old pair becomes invalid at four old votes; the new pair
+      // becomes qualified at five votes. Switching happens without a
+      // guarded revision, with a brief 48-bin fallback while <2 qualify.
+      bool suspended=false, reactivated=false;
       const uint32_t revision_at_selection=learn.revisions();
       for(unsigned ep=0;ep<8;++ep) {
         for(unsigned t=0;t<15;++t) {
@@ -293,23 +294,32 @@ int main() {
           for(size_t i=12;i<18;++i) energy[i]=0.02f;
           clock+=100;
           learn.observe(energy,clock,t==5,true);
-          suspended |= path.suspend_if_unqualified(learn);
+          const bool changed=path.refresh(learn);
+          if(changed && !path.active()) suspended=true;
+          if(changed && path.active() && path.top_bin(0)>=12) reactivated=true;
         }
         for(unsigned t=0;t<65;++t) {
           for(size_t i=0;i<48;++i) energy[i]=0.000001f;
           clock+=100;
           learn.observe(energy,clock,false,false);
-          suspended |= path.suspend_if_unqualified(learn);
+          const bool changed=path.refresh(learn);
+          if(changed && !path.active()) suspended=true;
+          if(changed && path.active() && path.top_bin(0)>=12) reactivated=true;
+        }
+        if(ep==3) {
+          assert(suspended && !path.active()); // no pair has 5/8
+          assert(path.top_bin(0)==0 && path.top_bin(1)==0);
+        }
+        if(ep==4) {
+          assert(reactivated && path.active()); // replacements now have 5/8
+          assert(path.top_bin(0)>=12 && path.top_bin(1)>=12);
         }
       }
-      assert(suspended && !path.active());
-      assert(path.top_bin(0)==0 && path.top_bin(1)==0);
+      assert(suspended && reactivated && path.active());
       assert(learn.revisions()==revision_at_selection);
       assert(learn.recurrent_bins()>=2);
-      // New qualified bins cannot silently reactivate before configure().
-      assert(!path.suspend_if_unqualified(learn) && !path.active());
-      path.configure(learn);
-      assert(path.active() && path.top_bin(0)>=12 && path.top_bin(1)>=12);
+      assert(!path.refresh(learn)); // silence cannot churn the pair
+
     }
   };
   run_exact_group(1);
@@ -431,5 +441,5 @@ int main() {
   }
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
-  std::puts("C++ MVS3 top-2 70/30 priority gate, 90% weights, rolling episodes and MVS1 isolation: PASS");
+  std::puts("C++ MVS3 dynamic top-2 priority, 70/30 gate, 90% weight revisions, rolling episodes and MVS1 isolation: PASS");
 }
