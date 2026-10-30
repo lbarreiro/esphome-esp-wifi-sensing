@@ -402,6 +402,11 @@ int main() {
   }
   assert(third.learning().episodes()==1);
   assert(third.learning().revisions()==0);
+  // Diagnostic counters distinguish the selected Top 2 from the number of
+  // observations where 70/30 was actually applied.
+  assert(third.scored_observations()>0);
+  assert(third.priority_metric_observations()==0);
+  assert(third.last_confirmation_route()==1); // no Top2: global 48-bin path
 
   // Isolation regression: run the reference MVS-256 both alone and beside
   // a training MVS-3. Its score, ON/OFF and timing must remain IDENTICAL,
@@ -424,6 +429,10 @@ int main() {
     assert(learned_control.motion==e.motion);
     assert(learned_control.score==e.score);
     assert(learned_control.observation_count==e.observation_count);
+    assert(learned_alone.scored_observations()==adaptive.scored_observations());
+    assert(learned_alone.priority_metric_observations()==adaptive.priority_metric_observations());
+    assert(adaptive.priority_metric_observations()<=adaptive.scored_observations());
+    assert(learned_alone.last_confirmation_route()==adaptive.last_confirmation_route());
     assert(learned_alone.learning().episodes()==adaptive.learning().episodes());
     assert(learned_alone.learning().revisions()==adaptive.learning().revisions());
     for(size_t i=0;i<CsiLearning::kBins;++i)
