@@ -189,14 +189,14 @@ void ESPWiFiSensing::loop() {
         const uint32_t route = mvs_3_last_confirmation_route_.load(std::memory_order_relaxed);
         const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
             route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
-        ESP_LOGI(TAG, "MVS3 ESTADO: MOVIMENTO=%s | ULTIMA_VIA=%s | RETENCAO=%u ms",
+        ESP_LOGI(TAG, "ESTADO: MOVIMENTO=%s | ULTIMA_VIA=%s | RETENCAO=%u ms",
                  active_3 ? "ON" : "OFF", via, static_cast<unsigned>(motion_hold_time_ms_));
         motion_3_binary_sensor_->publish_state(active_3);
       }
       if (static_cast<uint32_t>(now - learn_last_log_ms_) >= 60000U) {
         learn_last_log_ms_ = now;
-        // Upper-case topic headers are intentionally easy to scan in a
-        // plain ESPHome terminal (the firmware cannot change console fonts).
+        // Short uppercase topic names are easier to scan in ESPHome logs;
+        // the firmware itself cannot adjust the viewer's font size.
         const uint32_t route = mvs_3_last_confirmation_route_.load(std::memory_order_relaxed);
         const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
             route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
@@ -211,29 +211,29 @@ void ESPWiFiSensing::loop() {
 
         if (seen_3) {
           const uint32_t age_s = csi_elapsed_or_zero(now, last_3) / 1000U;
-          ESP_LOGI(TAG, "MVS3 === ESTADO: MOVIMENTO=%s | TOP2=%s | ULTIMA=%us VIA=%s | 70_USADO=%u/%u (%u%%) ===",
+          ESP_LOGI(TAG, "ESTADO: MOVIMENTO=%s | TOP2=%s | ULTIMA=%us VIA=%s | 70_USADO=%u/%u (%u%%)",
             active_3 ? "ON" : "OFF", priority_active_.load() ? "QUALIFICADO" : "INATIVO",
             static_cast<unsigned>(age_s), via, static_cast<unsigned>(applied_minute),
             static_cast<unsigned>(total_minute), percent70);
         } else {
-          ESP_LOGI(TAG, "MVS3 === ESTADO: MOVIMENTO=%s | TOP2=%s | ULTIMA=SEM | 70_USADO=%u/%u (%u%%) ===",
+          ESP_LOGI(TAG, "ESTADO: MOVIMENTO=%s | TOP2=%s | ULTIMA=SEM | 70_USADO=%u/%u (%u%%)",
             active_3 ? "ON" : "OFF", priority_active_.load() ? "QUALIFICADO" : "INATIVO",
             static_cast<unsigned>(applied_minute), static_cast<unsigned>(total_minute), percent70);
         }
 
         if (priority_active_.load()) {
-          ESP_LOGI(TAG, "MVS3 === TOP 2: #%u [%u/8 cand=%.2f peso=%.2f] + #%u [%u/8 cand=%.2f peso=%.2f] | QUALIFICADAS=%u/48 JANELA=%u/8 ===",
+          ESP_LOGI(TAG, "TOP 2: #%u [%u/8 cand=%.2f peso=%.2f] + #%u [%u/8 cand=%.2f peso=%.2f] | QUALIFICADAS=%u/48 JANELA=%u/8",
             static_cast<unsigned>(priority_bins_[0].load()),
             static_cast<unsigned>(priority_hits_[0].load()), priority_candidates_[0].load(), priority_weights_[0].load(),
             static_cast<unsigned>(priority_bins_[1].load()),
             static_cast<unsigned>(priority_hits_[1].load()), priority_candidates_[1].load(), priority_weights_[1].load(),
             static_cast<unsigned>(learn_recurrent_.load()), static_cast<unsigned>(learn_window_.load()));
         } else {
-          ESP_LOGI(TAG, "MVS3 === TOP 2: INATIVO (48 PORTADORAS) | QUALIFICADAS=%u/48 JANELA=%u/8 ===",
+          ESP_LOGI(TAG, "TOP 2: INATIVO (48 PORTADORAS) | QUALIFICADAS=%u/48 JANELA=%u/8",
             static_cast<unsigned>(learn_recurrent_.load()), static_cast<unsigned>(learn_window_.load()));
         }
 
-        ESP_LOGI(TAG, "MVS3 === MIN/MAX: MELHOR=#%u [%u/8 cand=%.2f peso=%.2f] | PIOR=#%u [%u/8 cand=%.2f peso=%.2f] | promov=%u fortes=%u fracas=%u media=%.2f ===",
+        ESP_LOGI(TAG, "MIN/MAX: MELHOR=#%u [%u/8 cand=%.2f peso=%.2f] | PIOR=#%u [%u/8 cand=%.2f peso=%.2f] | promov=%u fortes=%u fracas=%u media=%.2f",
           static_cast<unsigned>(learn_best_.load()), static_cast<unsigned>(learn_best_hits_.load()),
           learn_best_candidate_.load(), learn_best_weight_.load(),
           static_cast<unsigned>(learn_low_.load()), static_cast<unsigned>(learn_low_hits_.load()),
@@ -241,14 +241,14 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_promoted_.load()), static_cast<unsigned>(learn_strong_.load()),
           static_cast<unsigned>(learn_weak_.load()), learn_mean_candidate_.load());
 
-        ESP_LOGI(TAG, "MVS3 === APRENDIZAGEM: rev=%u ep=%u elegiveis=%u ignorados=%u rejeitados=%u silencio=%u | prequiet=%u transicoes=%u 10x=%u 256x=%u ===",
+        ESP_LOGI(TAG, "APRENDIZAGEM: rev=%u ep=%u elegiveis=%u ignorados=%u rejeitados=%u silencio=%u | prequiet=%u transicoes=%u 10x=%u 256x=%u",
           static_cast<unsigned>(learn_revisions_.load()), static_cast<unsigned>(learn_episodes_.load()),
           static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
           static_cast<unsigned>(learn_rejected_.load()), static_cast<unsigned>(learn_quiet_.load()),
           static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()),
           static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
 
-        ESP_LOGI(TAG, "MVS3 === DIAGNOSTICO: global=%.3f top=%.3f confirms=%u held=%u | rawquiet=%u energia=%.6f limite=%.6f obs=%u good=%u/%u discard=%u resets=%u gaps=%u ===",
+        ESP_LOGI(TAG, "DIAGNOSTICO: global=%.3f top=%.3f confirms=%u held=%u | rawquiet=%u energia=%.6f limite=%.6f obs=%u good=%u/%u discard=%u resets=%u gaps=%u",
           learn_score_.load(), priority_score_.load(),
           static_cast<unsigned>(priority_confirmations_.load()), static_cast<unsigned>(learn_held_.load()),
           static_cast<unsigned>(learn_raw_quiet_.load()), learn_energy_.load(), learn_limit_.load(),
