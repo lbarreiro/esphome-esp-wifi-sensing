@@ -192,29 +192,41 @@ void ESPWiFiSensing::loop() {
       }
       if (static_cast<uint32_t>(now - learn_last_log_ms_) >= 60000U) {
         learn_last_log_ms_ = now;
-        ESP_LOGI(TAG, "MVS3 learn q=%u ep=%u reject=%u rev=%u hi=%u:%.2f/%.2f lo=%u:%.2f/%.2f (candidate/weight)",
-          static_cast<unsigned>(learn_quiet_.load()), static_cast<unsigned>(learn_episodes_.load()),
-          static_cast<unsigned>(learn_rejected_.load()), static_cast<unsigned>(learn_revisions_.load()),
-          static_cast<unsigned>(learn_best_.load()), learn_best_candidate_.load(), learn_best_weight_.load(),
-          static_cast<unsigned>(learn_low_.load()), learn_low_candidate_.load(), learn_low_weight_.load());
-        ESP_LOGI(TAG, "MVS3 diag obs=%u held=%u score=%.3f energy=%.6f limit=%.6f rawquiet=%u good=%u/%u discard=%u holdreset=%u gaps=%u",
-          static_cast<unsigned>(learn_observations_.load()), static_cast<unsigned>(learn_held_.load()),
-          learn_score_.load(), learn_energy_.load(), learn_limit_.load(),
-          static_cast<unsigned>(learn_raw_quiet_.load()), static_cast<unsigned>(learn_good_.load()),
-          static_cast<unsigned>(learn_count_.load()), static_cast<unsigned>(learn_discarded_.load()),
-          static_cast<unsigned>(learn_hold_resets_.load()), static_cast<unsigned>(learn_gaps_.load()));
-        ESP_LOGI(TAG, "MVS3 bins win=%u/8 hit5=%u up=%u strong=%u weak=%u mean=%.2f last10x=%u last256x=%u",
-          static_cast<unsigned>(learn_window_.load()), static_cast<unsigned>(learn_recurrent_.load()),
+        // Reading order: TOP decision + 5/8 recurrence first, then best/worst,
+        // training evidence and finally raw signal diagnostics. Same 60s timing.
+        if (priority_active_.load()) {
+          ESP_LOGI(TAG, "MVS3 TOP 70/30=ON | #%u hits=%u/8 c=%.2f w=%.2f + #%u hits=%u/8 c=%.2f w=%.2f | qualified=%u/48 win=%u/8 rev=%u",
+            static_cast<unsigned>(priority_bins_[0].load()),
+            static_cast<unsigned>(priority_hits_[0].load()), priority_candidates_[0].load(), priority_weights_[0].load(),
+            static_cast<unsigned>(priority_bins_[1].load()),
+            static_cast<unsigned>(priority_hits_[1].load()), priority_candidates_[1].load(), priority_weights_[1].load(),
+            static_cast<unsigned>(learn_recurrent_.load()), static_cast<unsigned>(learn_window_.load()),
+            static_cast<unsigned>(learn_revisions_.load()));
+        } else {
+          ESP_LOGI(TAG, "MVS3 TOP 70/30=OFF (48-bin fallback) | qualified=%u/48 win=%u/8 rev=%u",
+            static_cast<unsigned>(learn_recurrent_.load()), static_cast<unsigned>(learn_window_.load()),
+            static_cast<unsigned>(learn_revisions_.load()));
+        }
+        ESP_LOGI(TAG, "MVS3 RANK best=#%u hits=%u/8 c=%.2f w=%.2f | worst=#%u hits=%u/8 c=%.2f w=%.2f | up=%u strong=%u weak=%u mean=%.2f",
+          static_cast<unsigned>(learn_best_.load()), static_cast<unsigned>(learn_best_hits_.load()),
+          learn_best_candidate_.load(), learn_best_weight_.load(),
+          static_cast<unsigned>(learn_low_.load()), static_cast<unsigned>(learn_low_hits_.load()),
+          learn_low_candidate_.load(), learn_low_weight_.load(),
           static_cast<unsigned>(learn_promoted_.load()), static_cast<unsigned>(learn_strong_.load()),
-          static_cast<unsigned>(learn_weak_.load()), learn_mean_candidate_.load(),
-          static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
-        ESP_LOGI(TAG, "MVS3 gate eligible=%u skipped=%u prequiet=%u transitions=%u",
-          static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
-          static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()));
-        ESP_LOGI(TAG, "MVS3 priority active=%u split=70/30 bins=%u,%u score=%.3f confirms=%u",
-          static_cast<unsigned>(priority_active_.load()),
-          static_cast<unsigned>(priority_bins_[0].load()), static_cast<unsigned>(priority_bins_[1].load()),
-          priority_score_.load(), static_cast<unsigned>(priority_confirmations_.load()));
+          static_cast<unsigned>(learn_weak_.load()), learn_mean_candidate_.load());
+        ESP_LOGI(TAG, "MVS3 LEARN ep=%u eligible=%u skipped=%u reject=%u quiet=%u | prequiet=%u transitions=%u last10x=%u last256x=%u",
+          static_cast<unsigned>(learn_episodes_.load()), static_cast<unsigned>(learn_eligible_episodes_.load()),
+          static_cast<unsigned>(learn_skipped_episodes_.load()), static_cast<unsigned>(learn_rejected_.load()),
+          static_cast<unsigned>(learn_quiet_.load()), static_cast<unsigned>(learn_prequiet_bins_.load()),
+          static_cast<unsigned>(learn_transition_bins_.load()), static_cast<unsigned>(learn_last_over10x_.load()),
+          static_cast<unsigned>(learn_last_over256x_.load()));
+        ESP_LOGI(TAG, "MVS3 SIGNAL held=%u score=%.3f top_score=%.3f confirms=%u | rawquiet=%u energy=%.6f limit=%.6f obs=%u good=%u/%u discard=%u holdreset=%u gaps=%u",
+          static_cast<unsigned>(learn_held_.load()), learn_score_.load(), priority_score_.load(),
+          static_cast<unsigned>(priority_confirmations_.load()), static_cast<unsigned>(learn_raw_quiet_.load()),
+          learn_energy_.load(), learn_limit_.load(), static_cast<unsigned>(learn_observations_.load()),
+          static_cast<unsigned>(learn_good_.load()), static_cast<unsigned>(learn_count_.load()),
+          static_cast<unsigned>(learn_discarded_.load()), static_cast<unsigned>(learn_hold_resets_.load()),
+          static_cast<unsigned>(learn_gaps_.load()));
       }
     }
     // Hold expiry must run on every ESPHome loop, including when CSI stops.
@@ -652,8 +664,13 @@ void ESPWiFiSensing::csi_callback_(
         self->priority_active_.store(self->mvs_3_algorithm_.priority_active());
         self->priority_score_.store(self->mvs_3_algorithm_.priority_score());
         self->priority_confirmations_.store(self->mvs_3_algorithm_.priority_confirmations());
-        for (size_t i = 0; i < 2; ++i)
-          self->priority_bins_[i].store(static_cast<uint32_t>(self->mvs_3_algorithm_.priority_bin(i)));
+        for (size_t i = 0; i < 2; ++i) {
+          const size_t bin = self->mvs_3_algorithm_.priority_bin(i);
+          self->priority_bins_[i].store(static_cast<uint32_t>(bin));
+          self->priority_hits_[i].store(learn.hits(bin));
+          self->priority_candidates_[i].store(learn.candidate(bin));
+          self->priority_weights_[i].store(learn.weights()[bin]);
+        }
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
         self->learn_recurrent_.store(learn.recurrent_bins());
@@ -673,6 +690,7 @@ void ESPWiFiSensing::csi_callback_(
           if (learn.candidate(i) < learn.candidate(lo)) lo = i;
         }
         self->learn_best_.store(hi); self->learn_low_.store(lo);
+        self->learn_best_hits_.store(learn.hits(hi)); self->learn_low_hits_.store(learn.hits(lo));
         self->learn_best_candidate_.store(learn.candidate(hi)); self->learn_best_weight_.store(learn.weights()[hi]);
         self->learn_low_candidate_.store(learn.candidate(lo)); self->learn_low_weight_.store(learn.weights()[lo]);
       }
