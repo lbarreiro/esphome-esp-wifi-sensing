@@ -150,6 +150,7 @@ class ESPWiFiSensing : public Component {
   // Scalar atomic snapshots: loop never reads callback-owned learner memory.
   std::atomic<uint32_t> learn_quiet_{0}, learn_episodes_{0}, learn_rejected_{0}, learn_revisions_{0};
   std::atomic<uint32_t> learn_best_{0}, learn_low_{0};
+  std::atomic<uint32_t> learn_best_hits_{0}, learn_low_hits_{0};
   std::atomic<float> learn_best_candidate_{1}, learn_best_weight_{1};
   std::atomic<float> learn_low_candidate_{1}, learn_low_weight_{1};
   std::atomic<uint32_t> learn_discarded_{0}, learn_hold_resets_{0}, learn_gaps_{0};
@@ -168,6 +169,8 @@ class ESPWiFiSensing : public Component {
   std::atomic<float> priority_score_{0};
   std::atomic<uint32_t> priority_confirmations_{0};
   std::atomic<uint32_t> priority_bins_[2]{};
+  std::atomic<uint32_t> priority_hits_[2]{};
+  std::atomic<float> priority_candidates_[2]{}, priority_weights_[2]{};
   std::atomic<bool> learn_raw_quiet_{false}, learn_held_{false};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
