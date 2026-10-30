@@ -243,7 +243,7 @@ void ESPWiFiSensing::loop() {
 
         ESP_LOGI(TAG, "MVS3 === APRENDIZAGEM: rev=%u ep=%u elegiveis=%u ignorados=%u rejeitados=%u silencio=%u | prequiet=%u transicoes=%u 10x=%u 256x=%u ===",
           static_cast<unsigned>(learn_revisions_.load()), static_cast<unsigned>(learn_episodes_.load()),
-          static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_.load()),
+          static_cast<unsigned>(learn_eligible_episodes_.load()), static_cast<unsigned>(learn_skipped_episodes_.load()),
           static_cast<unsigned>(learn_rejected_.load()), static_cast<unsigned>(learn_quiet_.load()),
           static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()),
           static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
