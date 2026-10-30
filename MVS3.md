@@ -117,29 +117,31 @@ and all 48 bins contribute to the global decision.
 
 ## Large topic headers, every 60 seconds
 
-The existing **60-second interval** is preserved. Topic names are in uppercase
-and surrounded by `===` to be readable in plain ESPHome logs. The firmware
+The existing **60-second interval** is preserved. Each line starts directly
+with a clear uppercase topic (`ESTADO:`, `TOP 2:`, `MIN/MAX:`,
+`APRENDIZAGEM:` or `DIAGNOSTICO:`), without repeated `MVS3` prefixes or
+`===` decorations. ESPHome provides the source tag separately; the firmware
 does **not** control the font size in the ESPHome log viewer.
 
-1. `MVS3 === ESTADO:`: currently published movement ON/OFF; whether a
+1. `ESTADO:`: currently published movement ON/OFF; whether a
    **qualified Top 2 is available** (not synonymous with applying 70%);
    how many seconds since the last actual confirmation; that confirmation's
    route (`GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS`, or `SEM`);
    and `70_USADO=A/B (P%)`, the **A observations in the last minute**
    that actually applied 70/30 out of B scored observations. When no
    movement has ever been confirmed, the last confirmation says `SEM`.
-2. `MVS3 === TOP 2:`: selected bin numbers, each bin's hits out of 8,
+2. `TOP 2:`: selected bin numbers, each bin's hits out of 8,
    candidate (`cand`) and committed learned weight (`peso`).
    Also the number of 5/8-qualified bins and eligible episode window.
    When no pair is qualified it says `INATIVO (48 PORTADORAS)`.
-3. `MVS3 === MIN/MAX:`: best and worst current candidate bins,
+3. `MIN/MAX:`: best and worst current candidate bins,
    recurrence, candidate, weight, and promotion/quality counts.
    Because hysteresis stabilizes the selected pair, the best candidate
    can differ from a selected Top 2 bin.
-4. `MVS3 === APRENDIZAGEM:`: committed weight revision `rev`,
+4. `APRENDIZAGEM:`: committed weight revision `rev`,
    accepted/eligible/skipped/rejected episodes, accepted quiet blocks,
    and latest prequiet/transition/10x/256x counts.
-5. `MVS3 === DIAGNOSTICO:`: global and independent Top 2 scores,
+5. `DIAGNOSTICO:`: global and independent Top 2 scores,
    cumulative priority confirmations, retained motion state, raw quiet
    classification, observed energy and limit, sample counts, dropped
    blocks, hold resets and CSI discontinuities.
