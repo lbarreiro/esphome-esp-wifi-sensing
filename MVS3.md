@@ -83,20 +83,20 @@ existing 120-second ON hold or any MVS1 state.
 Once enabled, global MVS-3 decision energy is
 `0.70 * weighted_mean(energy[top2]) +
 0.30 * weighted_mean(energy[other46])`. Each group is separately normalized
-by its total learned weight. This 70/30 metric is used **only on observations
-where BOTH selected bins independently exceed the configured movement
-threshold relative to their own long-term quiet-energy references**. If
-only one selected bin responds, the global decision immediately uses the
-ordinary weighted 48-bin metric. Both metrics maintain separate quiet
-references so changing between them cannot produce artificial threshold
-crossings. **Before qualification**, the global score is likewise the
-original 48-bin weighted mean.
+by its total learned weight. **The global 70/30 metric is applied to every
+scored observation whenever a qualified Top 2 exists**. It no longer requires
+both selected bins to respond at the same instant: even if one bin is quiet,
+the global detector still uses the 70/30 formula. **Before qualification**
+or whenever the Top 2 becomes inactive, the global score uses the ordinary
+weighted 48-bin mean. The global 70/30 and 48-bin metrics retain separate
+quiet references to avoid artificial jumps when the selected pair changes.
 
 In addition, the two selected bins have their own score, independently
 calibrated using their own learned quiet energies, and an independent rolling
-motion confirmation filter. An observation counts as a priority hit
-only if BOTH bins independently respond at that moment AND the joint score
-meets the configured threshold. Like the global filter, this requires three
+motion confirmation filter. **This independent confirmation path is unchanged**:
+an observation counts as a priority hit only if BOTH bins independently
+respond at that moment AND the joint score meets the configured threshold.
+Like the global filter, this requires three
 hits in eight observations for OFF-to-ON and two in eight to renew ON. The final
 MVS-3 decision is `global_confirmed OR top2_confirmed`; therefore the two
 can trigger ON even when the other 46 are unresponsive, but neither can
@@ -161,10 +161,12 @@ eligible episodes. The cumulative `confirms` count includes hold renewals,
 not just distinct human movements. The independent CSI packet-length
 diagnostic is unchanged.
 
-A large percentage of `70_USADO` means more observations where the
-two selected bins simultaneously passed their individual gate, **not**
-necessarily higher human detection accuracy. It can be zero even while
-the Top 2 pair stays qualified.
+With the unrestricted global 70/30 weighting, `70_USADO` now reports
+how many scored observations happened while a qualified Top 2 existed;
+it no longer measures simultaneous reactions of the two individual bins.
+It will typically approach 100% during uninterrupted Top 2 qualification,
+**not** indicate motion accuracy or simultaneous response. Independent Top 2
+confirmations still require both bins to react in the same observation.
 
 ## Update YAML
 
