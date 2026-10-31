@@ -198,11 +198,11 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     raw_energy_[i] = delta * delta;
     this->previous_profile_[i] = profile[i];
   }
-  // Never apply the 70/30 weights when only one of the two priority
-  // subcarriers reacts. Both must independently clear their own quiet-based
-  // movement threshold in this SAME observation.
+  // Apply the 70/30 global weighting whenever a qualified Top 2 exists.
+  // The simultaneous-response gate remains exclusively on the independent
+  // Top 2 confirmation path; it does not restrict the global 70/30 metric.
   joint_response_ = priority_.joint_response(raw_energy_, learning_, threshold_);
-  using_priority_metric_ = priority_.active() && joint_response_;
+  using_priority_metric_ = priority_.active();
   ++scored_observations_;
   if (using_priority_metric_) ++priority_metric_observations_;
   const float normal_energy = priority_.combined_energy(
