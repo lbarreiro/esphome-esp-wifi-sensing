@@ -201,17 +201,19 @@ int main() {
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
   assert(std::fabs(priority.combined_energy(energy,unequal_weights)-0.30f)<0.0001f);
 
-  // The two must individually respond within the SAME observation.
-  // One extremely energetic but noisy bin is insufficient for either
-  // independent confirmation OR the global 70/30 path.
+  // The global 70/30 formula is deliberately unrestricted once Top 2
+  // qualifies. One responsive bin may dominate that global metric.
+  // The separate independent Top2 confirmation STILL requires both bins
+  // to respond within the SAME observation.
   float individual[48]{};
   for (size_t i=0;i<48;++i) individual[i]=0.000001f;
   const auto first_bin=priority.top_bin(0);
   const auto second_bin=priority.top_bin(1);
   individual[first_bin]=0.06f;
   assert(!priority.joint_response(individual,varied,8.1f));
-  assert(std::fabs(priority.combined_energy(individual,unit_weights,nullptr,false)
-                   -priority.combined_energy(individual,unit_weights,nullptr,true))>0.001f);
+  const float unrestricted_70 = priority.combined_energy(individual,unit_weights,nullptr,true);
+  const float ordinary_48 = priority.combined_energy(individual,unit_weights,nullptr,false);
+  assert(unrestricted_70 > ordinary_48 * 5.0f);
   assert(std::fabs(priority.combined_energy(individual,unit_weights,nullptr,false)
                    -(0.06f+47.0f*0.000001f)/48.0f)<0.00001f);
   individual[second_bin]=0.06f;
@@ -413,7 +415,7 @@ int main() {
   // including after MVS-3 revises its internal weights.
   MvsAlgorithm reference_alone, reference_beside;
   ExperimentalMvsAlgorithm adaptive, learned_alone;
-  bool revised=false;
+  bool revised=false, used_unrestricted_70_while_quiet=false;
   for(uint32_t t=0;t<13200;++t) {
     const bool moving=(t%1600 >= 400 && t%1600 < 450);
     for(size_t i=0;i<48;++i) packet.subcarriers[i].amplitude =
@@ -421,7 +423,14 @@ int main() {
         (moving ? 0.5f*std::sin(i*0.55f+t*0.37f) : 0.0f));
     const auto a=reference_alone.process(packet,t*100);
     const auto learned_control=learned_alone.process(packet,t*100);
+    const bool qualified_before=adaptive.priority_active();
+    const uint32_t metric_count_before=adaptive.priority_metric_observations();
     const auto e=adaptive.process(packet,t*100);
+    // On a quiet observation, 70/30 must still be used if Top2 is valid.
+    // This fails under the old simultaneous-response restriction.
+    if (qualified_before && !moving && adaptive.priority_active() &&
+        adaptive.priority_metric_observations()>metric_count_before)
+      used_unrestricted_70_while_quiet=true;
     const auto b=reference_beside.process(packet,t*100);
     // Also prove the reverse: running MVS1 beside MVS-3 cannot change
     // the learned branch's state, score or its 48 learned weights.
@@ -450,5 +459,6 @@ int main() {
   }
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
-  std::puts("C++ MVS3 dynamic top-2 priority, 70/30 gate, 90% weight revisions, rolling episodes and MVS1 isolation: PASS");
+  assert(used_unrestricted_70_while_quiet);
+  std::puts("C++ MVS3 unrestricted global 70/30, independent Top2 joint gate, 90% weight revisions and MVS1 isolation: PASS");
 }
