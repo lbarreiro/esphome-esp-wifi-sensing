@@ -9,11 +9,13 @@ constexpr float QUIET_FLOOR = 0.003f;
 }  // namespace
 
 MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
+  noise_observation_valid_ = false;
   // A gap/layout change is not a movement episode. Drop partial windows.
   if (packet.layout_supported && packet.count >= kBins) {
     if (packet_seen_ && (static_cast<uint32_t>(now_ms - last_packet_ms_) >
         std::max<uint32_t>(2000U, update_interval_ms_ * 3U) || packet.count != last_packet_count_)) {
       learning_.discontinuity();
+      noise_.interrupt();  // Broken CSI continuity invalidates provisional hour.
       have_previous_profile_ = false;
       accumulator_count_ = 0;
       timing_started_ = false;
@@ -40,6 +42,7 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
 
   const bool had_profile = have_previous_profile_;
   const float jitter = this->temporal_jitter_(observation);
+  noise_observation_valid_ = had_profile;
   // Preserve initial reference boot semantics; after a discontinuity/revision
   // the seed observation must not recalibrate or produce a decision.
   if (!had_profile && total_observations_ > 1) {
