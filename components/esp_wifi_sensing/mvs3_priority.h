@@ -11,10 +11,12 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 // Only the experimental MVS-3 uses this independent decision path.
-// Before two bins qualify, the ordinary weighted 48-bin score is retained.
+// With two or three qualified bins, 70% is shared by the selected group.
+// Below two qualified bins, the ordinary weighted 48-bin score is retained.
 class Mvs3Priority {
  public:
-  static constexpr size_t kTop = 2;
+  static constexpr size_t kTop = 2;  // Independent confirmation retains its two-bin gate.
+  static constexpr size_t kMaxTop = 3;  // Global 70/30 can consider three bins.
   static constexpr size_t kBins = CsiLearning::kBins;
   static constexpr size_t kMaxWindow = 64;
   static constexpr float kTopShare = 0.70f;
@@ -23,7 +25,8 @@ class Mvs3Priority {
   static constexpr float kQuietFloor = 0.003f;
 
   bool active() const { return active_; }
-  size_t top_bin(size_t index) const { return top_[index]; }
+  size_t top_bin(size_t index) const { return index < active_count_ ? top_[index] : 0; }
+  size_t active_count() const { return active_count_; }
   float score() const { return score_; }
   uint32_t confirmations() const { return confirmations_; }
 
@@ -59,7 +62,8 @@ class Mvs3Priority {
       pending_count_ = 0;
       if (!active_) return false;
       active_ = false;
-      for (size_t j = 0; j < kTop; ++j) top_[j] = 0;
+      active_count_ = 0;
+      for (size_t j = 0; j < kMaxTop; ++j) top_[j] = 0;
       recalibrate_(learning);
       return true;
     }
@@ -72,8 +76,9 @@ class Mvs3Priority {
       top_[0] = best[0];
       top_[1] = best[1];
       pending_count_ = 0;
-      if (weights_changed) recalibrate_(learning);
-      return false;
+      const bool third_changed = refresh_third_(learning);
+      if (weights_changed || third_changed) recalibrate_(learning);
+      return third_changed;
     }
 
     bool old_qualified = active_;
@@ -92,8 +97,9 @@ class Mvs3Priority {
           learning.candidate(best[1]) < std::min(learning.candidate(top_[0]),
                                                 learning.candidate(top_[1])) + 0.05f) {
         pending_count_ = 0;
-        if (weights_changed) recalibrate_(learning);
-        return false;
+        const bool third_changed = refresh_third_(learning);
+        if (weights_changed || third_changed) recalibrate_(learning);
+        return third_changed;
       }
       if (pending_count_ != 0 && pending_[0] == best[0] && pending_[1] == best[1]) {
         ++pending_count_;
@@ -103,8 +109,9 @@ class Mvs3Priority {
         pending_count_ = 1;
       }
       if (pending_count_ < 2) {
-        if (weights_changed) recalibrate_(learning);
-        return false;
+        const bool third_changed = refresh_third_(learning);
+        if (weights_changed || third_changed) recalibrate_(learning);
+        return third_changed;
       }
     }
 
@@ -112,14 +119,15 @@ class Mvs3Priority {
     active_ = true;
     top_[0] = best[0];
     top_[1] = best[1];
+    active_count_ = kTop;
+    refresh_third_(learning);
     pending_count_ = 0;
     recalibrate_(learning);
     return true;
   }
 
-  // Both priority bins must show individual signal energy substantially above
-  // their OWN learned quiet energy in the SAME observation. One strong noisy
-  // bin cannot authorize either priority decision path.
+  // The independent priority confirmation retains the original TWO-bin
+  // simultaneous-response gate; the global 70/30 is unrestricted.
   bool joint_response(const float *energy, const CsiLearning &learning, float threshold) const {
     if (!active_) return false;
     for (size_t j = 0; j < kTop; ++j) {
@@ -132,9 +140,9 @@ class Mvs3Priority {
     return true;
   }
 
-  // Two separately normalized populations: the two evidence-qualified
-  // bins receive 70% of the global decision energy; the other 46 receive
-  // 30%, regardless of their previously learned relative weights.
+  // Two separately normalized populations: the 2-3 selected bins receive
+  // 70% of global decision energy; the other 46-45 receive 30%, regardless
+  // of their previously learned relative weights.
   float combined_energy(const float *energy, const float *weights, float *selected_energy = nullptr,
                         bool allow_priority = true) const {
     float all_energy = 0.0f, all_weight = 0.0f;
@@ -147,7 +155,7 @@ class Mvs3Priority {
       return all_energy / all_weight;
     }
     float top_energy = 0.0f, top_weight = 0.0f;
-    for (size_t j = 0; j < kTop; ++j) {
+    for (size_t j = 0; j < active_count_; ++j) {
       const size_t i = top_[j];
       top_energy += energy[i] * weights[i];
       top_weight += weights[i];
@@ -155,8 +163,8 @@ class Mvs3Priority {
     const float top_mean = top_energy / top_weight;
     const float other_mean = std::max(0.0f, all_energy - top_energy) / (all_weight - top_weight);
     if (selected_energy != nullptr) *selected_energy = top_mean;
-    // Keep the two-bin diagnostic/quiet update fed even when only one bin
-    // reacts; the actual global decision safely falls back to all 48 bins.
+    // The independently gated confirmation retains its own two-bin input;
+    // global 70/30 includes all selected members unconditionally.
     if (!allow_priority) return all_energy / all_weight;
     return kTopShare * top_mean + kOtherShare * other_mean;
   }
@@ -193,6 +201,27 @@ class Mvs3Priority {
   }
 
  private:
+  // Always consider a third qualified bin immediately when it exists.
+  // Keep the original two-member selection and its stability hysteresis.
+  bool refresh_third_(const CsiLearning &learning) {
+    if (!active_) return false;
+    size_t best_third = kBins;
+    for (size_t i = 0; i < kBins; ++i) {
+      if (i == top_[0] || i == top_[1] ||
+          learning.hits(i) < CsiLearning::kMinHits ||
+          learning.candidate(i) <= 1.0001f) continue;
+      if (best_third == kBins || learning.candidate(i) > learning.candidate(best_third) ||
+          (learning.candidate(i) == learning.candidate(best_third) && i < best_third))
+        best_third = i;
+    }
+    const size_t next_count = best_third == kBins ? kTop : kMaxTop;
+    const bool changed = active_count_ != next_count ||
+        (next_count == kMaxTop && top_[2] != best_third);
+    active_count_ = next_count;
+    top_[2] = next_count == kMaxTop ? best_third : 0;
+    return changed;
+  }
+
   void recalibrate_(const CsiLearning &learning) {
     float top_quiet = 0.0f, top_weight = 0.0f;
     if (active_) {
@@ -208,7 +237,8 @@ class Mvs3Priority {
     clear_filter();
   }
 
-  size_t top_[kTop]{};
+  size_t top_[kMaxTop]{};
+  size_t active_count_{0};
   size_t pending_[kTop]{};
   uint8_t pending_count_{0};
   uint32_t last_eligible_episodes_{0};
