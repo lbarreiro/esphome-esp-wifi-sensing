@@ -33,7 +33,8 @@ class CsiNoiseLearning {
   // True if at least one of MVS1/MVS3 confirmed a detection, is in its
   // 120-second hold, or a CSI discontinuity prevented a trustworthy hour.
   void interrupt() {
-    if (started_) ++interruptions_;
+    if (!started_) return;
+    ++interruptions_;
     started_ = false;
     pending_minutes_ = 0;
     current_ = Minute{};
@@ -89,14 +90,19 @@ class CsiNoiseLearning {
 
   // Silentest three *across all 48*, not only 5/8-qualified movement bins.
   void quietest_three(size_t (&bins)[3]) const {
-    bins[0]=bins[1]=bins[2]=0;
+    bins[0]=0; bins[1]=1; bins[2]=2;
     if (!ready_) return;
-    for (size_t i=0; i<kBins; ++i) {
+    auto better = [this](size_t a, size_t b) {
+      return quality_[a] > quality_[b] ||
+          (quality_[a] == quality_[b] && a < b);
+    };
+    for (size_t a=1; a<3; ++a)
+      for (size_t b=a; b>0 && better(bins[b], bins[b-1]); --b)
+        std::swap(bins[b], bins[b-1]);
+    for (size_t i=3; i<kBins; ++i) {
       for (size_t p=0; p<3; ++p) {
-        if ((i != bins[0] && i != bins[1] && i != bins[2]) &&
-            (i==0 || quality_[i]>quality_[bins[p]] ||
-             (quality_[i]==quality_[bins[p]] && i<bins[p]))) {
-          for (size_t s=2; s>p; --s) bins[s]=bins[s-1];
+        if (better(i, bins[p])) {
+          for (size_t j=2; j>p; --j) bins[j]=bins[j-1];
           bins[p]=i;
           break;
         }
