@@ -173,15 +173,16 @@ int main() {
   assert(std::fabs(priority.combined_energy(energy,unit_weights))<0.00001f);
   assert(priority.refresh(varied));
   assert(priority.active());
+  assert(priority.active_count()==3); // third qualifying bin joins 70/30
   bool selected[48]{};
-  for (size_t j=0;j<2;++j) {
+  for (size_t j=0;j<priority.active_count();++j) {
     const auto b=priority.top_bin(j);
     assert(b<48 && !selected[b]);
     selected[b]=true;
     assert(varied.hits(b)>=5 && varied.candidate(b)>1.0f);
   }
-  // A top-two-only disturbance contributes 70% of the total energy,
-  // regardless of how low the remaining 46 bins are.
+  // A full two-or-three-member group contributes 70% of total energy,
+  // regardless of how quiet the remaining 46 or 45 bins are.
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 1.0f : 0.0f;
   float top_energy=0.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f)<0.0001f);
@@ -279,6 +280,7 @@ int main() {
     Mvs3Priority path;
     assert(path.refresh(learn)==(fixed>=2));
     assert(path.active()==(fixed>=2));
+    assert(path.active_count()==(fixed>=2 ? (fixed>=3 ? 3U : 2U) : 0U));
     if(fixed>=2) {
       for(size_t i=0;i<2;++i) {
         assert(path.top_bin(i)<fixed);
@@ -318,6 +320,7 @@ int main() {
         }
       }
       assert(suspended && reactivated && path.active());
+      assert(path.active_count()==3); // three new qualified bins are now used
       assert(learn.revisions()==revision_at_selection);
       assert(learn.recurrent_bins()>=2);
       assert(!path.refresh(learn)); // silence cannot churn the pair
@@ -326,6 +329,7 @@ int main() {
   };
   run_exact_group(1);
   run_exact_group(2);
+  run_exact_group(3);
 
   // An RF-noisy bin and an isolated spike MUST NOT be credited as motion.
   // Both are observed alongside genuinely responsive bins in eight episodes.
@@ -460,5 +464,5 @@ int main() {
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
   assert(used_unrestricted_70_while_quiet);
-  std::puts("C++ MVS3 unrestricted global 70/30, independent Top2 joint gate, 90% weight revisions and MVS1 isolation: PASS");
+  std::puts("C++ MVS3 unrestricted 2-3-bin global 70/30, independent two-bin gate, weight revisions and MVS1 isolation: PASS");
 }
