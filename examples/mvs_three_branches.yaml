@@ -48,3 +48,26 @@ binary_sensor:
       name: CSI Motion 256 Reference
     motion_3:
       name: CSI Motion 256 Learned
+    top3:
+      name: "MVS3 TOP3"
+      entity_category: diagnostic
+
+sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    ultima_minutos:
+      name: "MVS3 Ultima confirmacao"
+      entity_category: diagnostic
+    portadora_mais_fraca:
+      name: "MVS3 Portadora mais fraca"
+      entity_category: diagnostic
+
+text_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    via:
+      name: "MVS3 Via"
+      entity_category: diagnostic
+    portadoras_top:
+      name: "MVS3 Portadoras Top"
+      entity_category: diagnostic
