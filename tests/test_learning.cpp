@@ -293,6 +293,7 @@ int main() {
         assert(learn.hits(path.top_bin(i))==8);
       }
       // Next eight eligible episodes respond only on a NEW pair.
+      // Use fresh bins 38-43, which cannot overlap the initially cycling bins.
       // The old pair becomes invalid at four old votes; the new pair
       // becomes qualified at five votes. Switching happens without a
       // guarded revision, with a brief 48-bin fallback while <2 qualify.
@@ -301,12 +302,12 @@ int main() {
       for(unsigned ep=0;ep<8;++ep) {
         for(unsigned t=0;t<15;++t) {
           for(size_t i=0;i<48;++i) energy[i]=0.000001f;
-          for(size_t i=12;i<18;++i) energy[i]=0.02f;
+          for(size_t i=38;i<44;++i) energy[i]=0.02f;
           clock+=100;
           learn.observe(energy,clock,t==5,true);
           const bool changed=path.refresh(learn);
           if(changed && !path.active()) suspended=true;
-          if(changed && path.active() && path.top_bin(0)>=12) reactivated=true;
+          if(changed && path.active() && path.top_bin(0)>=38) reactivated=true;
         }
         for(unsigned t=0;t<65;++t) {
           for(size_t i=0;i<48;++i) energy[i]=0.000001f;
@@ -314,7 +315,7 @@ int main() {
           learn.observe(energy,clock,false,false);
           const bool changed=path.refresh(learn);
           if(changed && !path.active()) suspended=true;
-          if(changed && path.active() && path.top_bin(0)>=12) reactivated=true;
+          if(changed && path.active() && path.top_bin(0)>=38) reactivated=true;
         }
         if(ep==3) {
           assert(suspended && !path.active()); // no pair has 5/8
@@ -322,7 +323,7 @@ int main() {
         }
         if(ep==4) {
           assert(reactivated && path.active()); // replacements now have 5/8
-          assert(path.top_bin(0)>=12 && path.top_bin(1)>=12);
+          assert(path.top_bin(0)>=38 && path.top_bin(1)>=38);
         }
       }
       assert(suspended && reactivated && path.active());
