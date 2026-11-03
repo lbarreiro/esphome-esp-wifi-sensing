@@ -25,6 +25,7 @@ class ExperimentalMvsAlgorithm {
   float priority_score() const { return priority_.score(); }
   uint32_t priority_confirmations() const { return priority_.confirmations(); }
   size_t priority_bin(size_t i) const { return priority_.top_bin(i); }
+  size_t priority_count() const { return priority_.active_count(); }
   // The last confirmation route is kept even if the ON hold expires.
   // 0=none, 1=global 48-bin, 2=global 70/30, 3=independent Top2, 4=both.
   uint8_t last_confirmation_route() const { return last_confirmation_route_; }
