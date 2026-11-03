@@ -165,6 +165,7 @@ class ESPWiFiSensing : public Component {
   uint32_t mvs3_ha_last_weakest_{UINT32_MAX};
   uint32_t mvs3_ha_last_age_minutes_{UINT32_MAX};
   bool mvs3_ha_last_seen_{false};
+  bool mvs3_ha_last_weakest_valid_{false};
 
   CsiParser csi_3_parser_{};
   ExperimentalMvsAlgorithm mvs_3_algorithm_{};
