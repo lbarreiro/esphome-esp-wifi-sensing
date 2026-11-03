@@ -187,6 +187,12 @@ int main() {
   float top_energy=0.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f)<0.0001f);
   assert(std::fabs(top_energy-1.0f)<0.0001f);
+  // Only the third bin responds: global 70/30 sees it, while the original
+  // independent Top2 energy must remain zero (not diluted by third-bin energy).
+  for (size_t i=0;i<48;++i) energy[i]=0.0f;
+  energy[priority.top_bin(2)]=1.0f;
+  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f/3.0f)<0.0001f);
+  assert(std::fabs(top_energy)<0.0001f);
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.30f)<0.0001f);
   assert(std::fabs(top_energy)<0.0001f);
@@ -330,6 +336,48 @@ int main() {
   run_exact_group(1);
   run_exact_group(2);
   run_exact_group(3);
+
+  // Dynamic third bin: exactly two qualify first, a third reaches 5/8,
+  // then it drops below 5/8 while the original pair stays qualified.
+  // 70/30 must transition 2 -> 3 -> 2 without ever dropping to global48.
+  CsiLearning dynamic; uint32_t dynamic_now=0;
+  float dynamic_energy[48]{};
+  for (unsigned i=0;i<3200;++i) {
+    for (size_t b=0;b<48;++b) dynamic_energy[b]=0.000001f;
+    dynamic_now+=100;
+    dynamic.observe(dynamic_energy,dynamic_now,false,false);
+  }
+  Mvs3Priority dynamic_path;
+  for (unsigned ep=0;ep<17;++ep) {
+    for (unsigned sample=0;sample<15;++sample) {
+      for (size_t b=0;b<48;++b) dynamic_energy[b]=0.000001f;
+      dynamic_energy[0]=dynamic_energy[1]=0.02f;
+      const bool third=(ep>=8 && ep<13);
+      if (third) dynamic_energy[2]=0.02f;
+      for (unsigned b=0;b<(third ? 3U : 4U);++b)
+        dynamic_energy[3+((ep*4+b)%44)]=0.02f;
+      dynamic_now+=100;
+      dynamic.observe(dynamic_energy,dynamic_now,sample==5,true);
+      dynamic_path.refresh(dynamic);
+    }
+    for (unsigned sample=0;sample<65;++sample) {
+      for (size_t b=0;b<48;++b) dynamic_energy[b]=0.000001f;
+      dynamic_now+=100;
+      dynamic.observe(dynamic_energy,dynamic_now,false,false);
+      dynamic_path.refresh(dynamic);
+    }
+    if (ep==7) {
+      assert(dynamic_path.active() && dynamic_path.active_count()==2);
+      assert(dynamic_path.top_bin(0)<2 && dynamic_path.top_bin(1)<2);
+    }
+    if (ep==12) {
+      assert(dynamic_path.active() && dynamic_path.active_count()==3);
+      assert(dynamic_path.top_bin(2)==2);
+    }
+    if (ep==16) {
+      assert(dynamic_path.active() && dynamic_path.active_count()==2);
+    }
+  }
 
   // An RF-noisy bin and an isolated spike MUST NOT be credited as motion.
   // Both are observed alongside genuinely responsive bins in eight episodes.
