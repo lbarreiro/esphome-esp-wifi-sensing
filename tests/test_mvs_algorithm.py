@@ -80,8 +80,15 @@ def test_cpp_uses_temporal_jitter_and_filter_not_absolute_baseline():
     assert "temporal_jitter_" in src and "update_filter_" in src
     assert "baseline_" not in src and "score_window_" not in src
 
-def test_only_public_motion_binary_sensor():
-    assert not Path("components/esp_wifi_sensing/sensor.py").exists()
+def test_native_ha_diagnostics_preserve_motion_sensor():
+    component = Path("components/esp_wifi_sensing")
+    binary = (component / "binary_sensor.py").read_text()
+    sensor = (component / "sensor.py").read_text()
+    text_sensor = (component / "text_sensor.py").read_text()
+    assert "CONF_MOTION_3" in binary and "CONF_MOTION" in binary
+    assert "CONF_TOP3" in binary
+    assert "ultima_minutos" in sensor and "portadora_mais_fraca" in sensor
+    assert "portadoras_top" in text_sensor and "via" in text_sensor
 
 def test_fixed_renewal_two_peaks():
     model=RadarModel()
