@@ -2,6 +2,8 @@
 #include "csi_timestamp.h"
 
 #include <cstdlib>
+#include <cstdio>
+#include <limits>
 
 #include "esp_err.h"
 #include "esp_netif.h"
@@ -144,6 +146,94 @@ void ESPWiFiSensing::setup() {
 }
 
 
+// Publish compact native ESPHome diagnostics using callback-owned atomic
+// snapshots. No CSI parsing, logging or networking occurs in the Wi-Fi task.
+// Selected carriers and route publish on change; age refreshes once a minute.
+void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
+  if (top3_binary_sensor_ == nullptr && ultima_minutos_sensor_ == nullptr &&
+      portadora_mais_fraca_sensor_ == nullptr && via_text_sensor_ == nullptr &&
+      portadoras_top_text_sensor_ == nullptr)
+    return;
+
+  const bool seen = mvs_3_confirmation_seen_.load(std::memory_order_acquire);
+  const uint32_t confirmed_at = mvs_3_last_confirmation_ms_.load(std::memory_order_relaxed);
+  const uint32_t route = mvs_3_last_confirmation_route_.load(std::memory_order_relaxed);
+  const uint32_t count = priority_count_.load(std::memory_order_acquire);
+  const uint32_t bins[3] = {
+    priority_bins_[0].load(std::memory_order_relaxed),
+    priority_bins_[1].load(std::memory_order_relaxed),
+    priority_third_bin_.load(std::memory_order_relaxed)
+  };
+  const bool weakest_valid = learn_observations_.load(std::memory_order_relaxed) > 0;
+  const uint32_t weakest = learn_low_.load(std::memory_order_relaxed);
+  const bool initial = !mvs3_ha_initialized_;
+  const bool periodic = initial ||
+      static_cast<uint32_t>(now - mvs3_ha_last_periodic_ms_) >= 60000U;
+  const bool selection_changed = initial || count != mvs3_ha_last_count_ ||
+      bins[0] != mvs3_ha_last_bins_[0] || bins[1] != mvs3_ha_last_bins_[1] ||
+      bins[2] != mvs3_ha_last_bins_[2];
+  const bool confirmation_changed = initial || seen != mvs3_ha_last_seen_ ||
+      (seen && confirmed_at != mvs3_ha_last_confirmation_ms_);
+  const bool route_changed = initial || route != mvs3_ha_last_route_;
+  const bool weakest_changed = initial || weakest != mvs3_ha_last_weakest_ ||
+      weakest_valid != mvs3_ha_last_weakest_valid_;
+  if (!periodic && !selection_changed && !confirmation_changed &&
+      !route_changed && !weakest_changed) return;
+
+  if (selection_changed) {
+    if (top3_binary_sensor_ != nullptr)
+      top3_binary_sensor_->publish_state(count >= 2);
+    if (portadoras_top_text_sensor_ != nullptr) {
+      char carrier_ids[16]{};
+      if (count == 2) {
+        std::snprintf(carrier_ids, sizeof(carrier_ids), "%u,%u",
+                      static_cast<unsigned>(bins[0]), static_cast<unsigned>(bins[1]));
+      } else if (count >= 3) {
+        std::snprintf(carrier_ids, sizeof(carrier_ids), "%u,%u,%u",
+                      static_cast<unsigned>(bins[0]), static_cast<unsigned>(bins[1]),
+                      static_cast<unsigned>(bins[2]));
+      }
+      // Empty text means no qualified group, never a misleading "0" carrier.
+      portadoras_top_text_sensor_->publish_state(carrier_ids);
+    }
+  }
+
+  if (via_text_sensor_ != nullptr && route_changed) {
+    const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
+                      route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
+    via_text_sensor_->publish_state(via);
+  }
+
+  if (ultima_minutos_sensor_ != nullptr && (periodic || confirmation_changed)) {
+    if (seen) {
+      // Integer minutes, so HA sees 0, 1, 2... without extra sub-minute traffic.
+      const uint32_t age_min = csi_elapsed_or_zero(now, confirmed_at) / 60000U;
+      if (initial || !mvs3_ha_last_seen_ || age_min != mvs3_ha_last_age_minutes_)
+        ultima_minutos_sensor_->publish_state(static_cast<float>(age_min));
+      mvs3_ha_last_age_minutes_ = age_min;
+    } else if (initial || mvs3_ha_last_seen_) {
+      // Unknown until the first real motion confirmation (also after reboot).
+      ultima_minutos_sensor_->publish_state(std::numeric_limits<float>::quiet_NaN());
+    }
+  }
+
+  if (portadora_mais_fraca_sensor_ != nullptr && weakest_changed) {
+    portadora_mais_fraca_sensor_->publish_state(
+        weakest_valid ? static_cast<float>(weakest) : std::numeric_limits<float>::quiet_NaN());
+  }
+
+  if (periodic) mvs3_ha_last_periodic_ms_ = now;
+  mvs3_ha_last_confirmation_ms_ = confirmed_at;
+  mvs3_ha_last_seen_ = seen;
+  mvs3_ha_last_route_ = route;
+  mvs3_ha_last_count_ = count;
+  for (size_t i = 0; i < 3; ++i) mvs3_ha_last_bins_[i] = bins[i];
+  mvs3_ha_last_weakest_ = weakest;
+  mvs3_ha_last_weakest_valid_ = weakest_valid;
+  mvs3_ha_initialized_ = true;
+}
+
+
 void ESPWiFiSensing::loop() {
   if (!this->csi_started_) {
     if (!this->start_csi_()) {
@@ -257,6 +347,7 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_discarded_.load()), static_cast<unsigned>(learn_hold_resets_.load()),
           static_cast<unsigned>(learn_gaps_.load()));
       }
+      publish_mvs3_ha_diagnostics_(now);
     }
     // Hold expiry must run on every ESPHome loop, including when CSI stops.
     const bool seen = this->mvs_confirmation_seen_.load(std::memory_order_acquire);
@@ -707,6 +798,12 @@ void ESPWiFiSensing::csi_callback_(
           self->priority_candidates_[i].store(learn.candidate(bin));
           self->priority_weights_[i].store(learn.weights()[bin]);
         }
+        // Extra HA metadata only: keep existing TOP 2 log fields untouched.
+        const size_t top_count = self->mvs_3_algorithm_.priority_count();
+        self->priority_third_bin_.store(
+            top_count == 3 ? static_cast<uint32_t>(self->mvs_3_algorithm_.priority_bin(2)) : 0,
+            std::memory_order_relaxed);
+        self->priority_count_.store(static_cast<uint32_t>(top_count), std::memory_order_release);
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
         self->learn_recurrent_.store(learn.recurrent_bins());
