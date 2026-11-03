@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "csi_learning.h"
+#include "csi_noise_learning.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -27,6 +28,7 @@ class Mvs3Priority {
   bool active() const { return active_; }
   size_t top_bin(size_t index) const { return index < active_count_ ? top_[index] : 0; }
   size_t active_count() const { return active_count_; }
+  void set_noise_learning(const CsiNoiseLearning *noise) { noise_ = noise; }
   float score() const { return score_; }
   uint32_t confirmations() const { return confirmations_; }
 
@@ -57,7 +59,24 @@ class Mvs3Priority {
     last_eligible_episodes_ = eligible;
 
     size_t best[kTop]{};
-    const bool enough = learning.select_top_two(best);
+    // Preserve the exact legacy order until the first verified silent hour.
+    bool enough = false;
+    if (noise_ == nullptr || !noise_->ready()) {
+      enough = learning.select_top_two(best);
+    } else if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
+      size_t found = 0;
+      for (size_t i=0; i<kBins; ++i) {
+        if (!qualified_(learning, i)) continue;
+        size_t pos=0;
+        while (pos<found && (rank_(learning,best[pos])>rank_(learning,i) ||
+            (rank_(learning,best[pos])==rank_(learning,i) && best[pos]<i))) ++pos;
+        if (pos>=kTop) continue;
+        if (found<kTop) ++found;
+        for (size_t j=found-1;j>pos;--j) best[j]=best[j-1];
+        best[pos]=i;
+      }
+      enough = found==kTop;
+    }
     if (!enough) {
       pending_count_ = 0;
       if (!active_) return false;
@@ -85,17 +104,16 @@ class Mvs3Priority {
     if (active_) {
       for (size_t j = 0; j < kTop; ++j) {
         const size_t i = top_[j];
-        old_qualified = old_qualified &&
-            learning.hits(i) >= CsiLearning::kMinHits &&
-            learning.candidate(i) > 1.0001f;
+        old_qualified = old_qualified && qualified_(learning, i);
       }
     }
     if (old_qualified) {
       // Only consider a better-ranked pair if the improvement is meaningful
       // and verified in successive independent episodes.
       if (!new_episode ||
-          learning.candidate(best[1]) < std::min(learning.candidate(top_[0]),
-                                                learning.candidate(top_[1])) + 0.05f) {
+          rank_(learning,best[1]) < std::min(rank_(learning,top_[0]),
+                                             rank_(learning,top_[1])) +
+              ((noise_ && noise_->ready()) ? 0.025f : 0.05f)) {
         pending_count_ = 0;
         const bool third_changed = refresh_third_(learning);
         if (weights_changed || third_changed) recalibrate_(learning);
@@ -207,6 +225,19 @@ class Mvs3Priority {
   }
 
  private:
+  bool qualified_(const CsiLearning &learning, size_t i) const {
+    return learning.hits(i) >= CsiLearning::kMinHits &&
+           learning.candidate(i) > 1.0001f;
+  }
+
+  // 50% movement score (existing candidate mapped to 0..1) and
+  // 50% silence quality. 5/8 movement remains a mandatory gate.
+  float rank_(const CsiLearning &learning, size_t i) const {
+    const float movement = std::max(0.0f, std::min(1.0f, learning.candidate(i) - 1.0f));
+    if (noise_ == nullptr || !noise_->ready()) return learning.candidate(i);
+    return 0.5f * movement + 0.5f * noise_->quality(i);
+  }
+
   // Always consider a third qualified bin immediately when it exists.
   // Keep the original two-member selection and its stability hysteresis.
   bool refresh_third_(const CsiLearning &learning) {
@@ -214,10 +245,9 @@ class Mvs3Priority {
     size_t best_third = kBins;
     for (size_t i = 0; i < kBins; ++i) {
       if (i == top_[0] || i == top_[1] ||
-          learning.hits(i) < CsiLearning::kMinHits ||
-          learning.candidate(i) <= 1.0001f) continue;
-      if (best_third == kBins || learning.candidate(i) > learning.candidate(best_third) ||
-          (learning.candidate(i) == learning.candidate(best_third) && i < best_third))
+          !qualified_(learning, i)) continue;
+      if (best_third == kBins || rank_(learning,i) > rank_(learning,best_third) ||
+          (rank_(learning,i) == rank_(learning,best_third) && i < best_third))
         best_third = i;
     }
     const size_t next_count = best_third == kBins ? kTop : kMaxTop;
@@ -245,6 +275,7 @@ class Mvs3Priority {
 
   size_t top_[kMaxTop]{};
   size_t active_count_{0};
+  const CsiNoiseLearning *noise_{nullptr};
   size_t pending_[kTop]{};
   uint8_t pending_count_{0};
   uint32_t last_eligible_episodes_{0};
