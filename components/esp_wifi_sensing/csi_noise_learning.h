@@ -38,8 +38,9 @@ class CsiNoiseLearning {
     started_ = false;
     session_validated_ = false;
     pending_minutes_ = 0;
+    // The pending slot counter invalidates old minutes; avoid wiping 24 KiB
+    // in the time-sensitive Wi-Fi callback on every movement transition.
     current_ = Minute{};
-    for (auto &minute : pending_) minute = Minute{};
     for (size_t i=0; i<kBins; ++i) recent_[i] = 0;
     // Keep the last VERIFIED baseline; motion never trains noise.
   }
@@ -167,7 +168,8 @@ class CsiNoiseLearning {
         accepted_minutes_ += kMinutes;
         ready_ = true;
         session_validated_ = true;
-        for (auto &minute : pending_) minute = Minute{};
+        // The hour is now consolidated; old provisional slots need no wipe.
+
       }
     } else {
       // Keep learning while silence continues, with bounded memory.
