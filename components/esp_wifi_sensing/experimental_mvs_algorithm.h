@@ -8,6 +8,7 @@
 #include "csi_parser.h"
 #include "mvs_algorithm.h"
 #include "csi_learning.h"
+#include "csi_noise_learning.h"
 #include "mvs3_priority.h"
 
 namespace esphome {
@@ -15,6 +16,15 @@ namespace esp_wifi_sensing {
 
 class ExperimentalMvsAlgorithm {
  public:
+  ExperimentalMvsAlgorithm() { priority_.set_noise_learning(&noise_); }
+  void observe_silence(uint32_t now, bool both_detectors_quiet) {
+    if (noise_observation_valid_) {
+      noise_.observe(raw_energy_, learning_, now, both_detectors_quiet, threshold_);
+    } else if (!both_detectors_quiet) {
+      noise_.interrupt();
+    }
+  }
+  const CsiNoiseLearning &noise_learning() const { return noise_; }
   void set_threshold(float threshold) { threshold_ = threshold; }
   void set_hold_time(uint32_t hold_ms) { hold_time_ms_ = hold_ms < kMinimumHoldMs ? kMinimumHoldMs : hold_ms; }
   MvsResult process(const ParsedCsiPacket &packet, uint32_t now_ms);
@@ -46,7 +56,9 @@ class ExperimentalMvsAlgorithm {
   const CsiLearning &learning() const { return learning_; }
  private:
   CsiLearning learning_{};
+  CsiNoiseLearning noise_{};
   Mvs3Priority priority_{};
+  bool noise_observation_valid_{false};
   float raw_energy_[kBins]{};
   float selected_energy_{0};
   float normal_jitter_{0.0f};
