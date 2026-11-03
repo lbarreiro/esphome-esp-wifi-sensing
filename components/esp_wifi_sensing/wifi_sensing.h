@@ -7,6 +7,8 @@
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 
 #include "esp_wifi.h"
 #include "ping/ping_sock.h"
@@ -57,6 +59,12 @@ class ESPWiFiSensing : public Component {
   void set_statistics_update(uint32_t time_ms) { this->statistics_update_ms_ = time_ms; }
 
   void set_motion_3_binary_sensor(binary_sensor::BinarySensor *sensor) { motion_3_binary_sensor_ = sensor; }
+  void set_top3_binary_sensor(binary_sensor::BinarySensor *sensor) { top3_binary_sensor_ = sensor; }
+  void set_ultima_minutos_sensor(sensor::Sensor *sensor) { ultima_minutos_sensor_ = sensor; }
+  void set_portadora_mais_fraca_sensor(sensor::Sensor *sensor) { portadora_mais_fraca_sensor_ = sensor; }
+  void set_via_text_sensor(text_sensor::TextSensor *sensor) { via_text_sensor_ = sensor; }
+  void set_portadoras_top_text_sensor(text_sensor::TextSensor *sensor) { portadoras_top_text_sensor_ = sensor; }
+
  protected:
   static void csi_callback_(
       void *ctx,
@@ -69,6 +77,7 @@ class ESPWiFiSensing : public Component {
   bool apply_motion_hold_(bool motion_detected, uint32_t now);
   void add_variation_sample_(uint32_t variation, uint32_t now);
   void prune_variation_samples_(uint32_t now);
+  void publish_mvs3_ha_diagnostics_(uint32_t now);
 
   // CSI
   volatile uint32_t csi_packet_count_{0};
@@ -141,6 +150,22 @@ class ESPWiFiSensing : public Component {
   esp_ping_handle_t ping_handle_{nullptr};
 
   binary_sensor::BinarySensor *motion_3_binary_sensor_{nullptr};
+  // Optional native ESPHome entities. No additional polling or MQTT needed.
+  binary_sensor::BinarySensor *top3_binary_sensor_{nullptr};
+  sensor::Sensor *ultima_minutos_sensor_{nullptr};
+  sensor::Sensor *portadora_mais_fraca_sensor_{nullptr};
+  text_sensor::TextSensor *via_text_sensor_{nullptr};
+  text_sensor::TextSensor *portadoras_top_text_sensor_{nullptr};
+  bool mvs3_ha_initialized_{false};
+  uint32_t mvs3_ha_last_periodic_ms_{0};
+  uint32_t mvs3_ha_last_confirmation_ms_{0};
+  uint32_t mvs3_ha_last_route_{UINT32_MAX};
+  uint32_t mvs3_ha_last_count_{UINT32_MAX};
+  uint32_t mvs3_ha_last_bins_[3]{UINT32_MAX, UINT32_MAX, UINT32_MAX};
+  uint32_t mvs3_ha_last_weakest_{UINT32_MAX};
+  uint32_t mvs3_ha_last_age_minutes_{UINT32_MAX};
+  bool mvs3_ha_last_seen_{false};
+
   CsiParser csi_3_parser_{};
   ExperimentalMvsAlgorithm mvs_3_algorithm_{};
   std::atomic<uint32_t> mvs_3_last_confirmation_ms_{0};
@@ -170,8 +195,10 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> learn_eligible_episodes_{0}, learn_skipped_episodes_{0};
   std::atomic<uint32_t> learn_prequiet_bins_{0}, learn_transition_bins_{0};
   std::atomic<float> learn_mean_candidate_{1.0f};
-  // Experimental two-bin 70/30 decision, published only via scalar atomics.
+  // MVS3 2-3-bin 70/30 decision, published only via scalar atomics.
   std::atomic<bool> priority_active_{false};
+  std::atomic<uint32_t> priority_count_{0};
+  std::atomic<uint32_t> priority_third_bin_{0};
   std::atomic<float> priority_score_{0};
   std::atomic<uint32_t> priority_confirmations_{0};
   std::atomic<uint32_t> priority_bins_[2]{};
