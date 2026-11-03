@@ -155,14 +155,20 @@ class Mvs3Priority {
       return all_energy / all_weight;
     }
     float top_energy = 0.0f, top_weight = 0.0f;
+    float pair_energy = 0.0f, pair_weight = 0.0f;
     for (size_t j = 0; j < active_count_; ++j) {
       const size_t i = top_[j];
-      top_energy += energy[i] * weights[i];
+      const float weighted = energy[i] * weights[i];
+      top_energy += weighted;
       top_weight += weights[i];
+      if (j < kTop) {  // Keep the separate two-bin detector's input unchanged.
+        pair_energy += weighted;
+        pair_weight += weights[i];
+      }
     }
     const float top_mean = top_energy / top_weight;
     const float other_mean = std::max(0.0f, all_energy - top_energy) / (all_weight - top_weight);
-    if (selected_energy != nullptr) *selected_energy = top_mean;
+    if (selected_energy != nullptr) *selected_energy = pair_energy / pair_weight;
     // The independently gated confirmation retains its own two-bin input;
     // global 70/30 includes all selected members unconditionally.
     if (!allow_priority) return all_energy / all_weight;
