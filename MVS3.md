@@ -174,6 +174,64 @@ It will typically approach 100% during uninterrupted 2-3-bin qualification,
 **not** indicate motion accuracy or simultaneous response. Independent Top 2
 confirmations still require both bins to react in the same observation.
 
+## Verified silence learning for Top 2/3 selection
+
+The existing movement-learning rules, including **5/8 qualifying votes**,
+movement-only committed weights and MVS1, are retained. Priority **selection**
+now uses **50% normalized movement quality + 50% verified silence quality**
+when a valid silence reference exists; before validation, it uses the exact
+previous movement-only ranking. Unqualified bins never join the priority
+selection, regardless of how silent they are. The independent Top2 confirmation
+and global 70/30 energy weights do not change.
+
+Silence quality has an equal-weight three-component penalty:
+
+- **Frequency**: fraction of silent CSI observations with an individual peak.
+- **Intensity**: average normalized exceedance among silent peaks, capped
+  per peak to avoid unbounded penalties.
+- **Persistence**: fraction of observations where at least three individual
+  peaks fall within a rolling window of eight observations.
+
+A noise peak is a per-bin score exceeding **half** the configured MVS movement
+threshold (4.05 for the current threshold 8.1). This *does not lower* the
+movement decision threshold; it characterizes subthreshold noise. The
+per-bin score is normalized against the existing learned quiet-energy reference.
+
+Noise data stays **provisional in RAM for 60 consecutive minute blocks**.
+The entire hour is invalidated if either detector confirms movement or
+its 120-second hold remains active, or if CSI continuity is lost. No incomplete
+hour contributes to noise ranking. A qualified hour is consolidated into an
+in-memory noise reference; subsequent silent minutes continue updating it.
+After a movement interruption, the last **validated** reference remains, but
+a new quiet session must independently complete another full hour before it
+can update the reference again. Nothing is written to flash.
+
+Priority group selection is still refreshed on new eligible movement episodes
+or movement weight revisions, not on every quiet CSI frame, avoiding silent
+top-rank churn. Once validated, the original 0.05 movement-candidate replacement
+margin becomes an equivalent 0.025 margin on the normalized 50/50 scale.
+Note: selected bins may be the most **discriminative** eligible bins, not the
+three globally quietest bins.
+
+A **new** minute log line, without replacing existing log lines, reports:
+
+```text
+SILENCIO: PROVISORIO 17/60min | TOP3_SILENCIOSAS=PENDENTE | INTERRUPCOES=2
+SILENCIO: VALIDADO | MINUTOS=61 | TOP3_SILENCIOSAS=#2 [1.000] #11 [0.997] #30 [0.995] | INTERRUPCOES=2
+```
+
+The displayed *silence-only* top three are the three quietest of **all 48**
+portadoras, even when they are not eligible for the 5/8 movement rule.
+Quality runs from 0 (very noisy) to 1 (quiet). Some carriers may tie;
+in that case, the lowest index wins. The first validated hour needs a
+long movement-free stretch, so initial logs can remain provisional.
+
+This feature uses roughly 24 KiB of additional RAM for provisional minute
+summaries, plus small fixed counters and scores, and no new HA entities or
+YAML settings. In the existing YAML, keep `refresh: always` when obtaining
+the branch; a new firmware compilation/install is required. Verifying movement
+performance and false-positive rates requires real tests in the room.
+
 ## Five native ESPHome entities for Home Assistant
 
 These optional entities use the same local CSI processing, without MQTT and
