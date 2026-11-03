@@ -346,6 +346,20 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_good_.load()), static_cast<unsigned>(learn_count_.load()),
           static_cast<unsigned>(learn_discarded_.load()), static_cast<unsigned>(learn_hold_resets_.load()),
           static_cast<unsigned>(learn_gaps_.load()));
+
+        // Added diagnostic line; all existing log formats remain unchanged.
+        if (silence_validated_.load(std::memory_order_acquire)) {
+          ESP_LOGI(TAG, "SILENCIO: VALIDADO | MINUTOS=%u | TOP3_SILENCIOSAS=#%u [%.3f] #%u [%.3f] #%u [%.3f] | INTERRUPCOES=%u",
+            static_cast<unsigned>(silence_accepted_minutes_.load()),
+            static_cast<unsigned>(silence_best_bins_[0].load()), silence_best_quality_[0].load(),
+            static_cast<unsigned>(silence_best_bins_[1].load()), silence_best_quality_[1].load(),
+            static_cast<unsigned>(silence_best_bins_[2].load()), silence_best_quality_[2].load(),
+            static_cast<unsigned>(silence_interruptions_.load()));
+        } else {
+          ESP_LOGI(TAG, "SILENCIO: PROVISORIO %u/60min | TOP3_SILENCIOSAS=PENDENTE | INTERRUPCOES=%u",
+            static_cast<unsigned>(silence_pending_minutes_.load()),
+            static_cast<unsigned>(silence_interruptions_.load()));
+        }
       }
       publish_mvs3_ha_diagnostics_(now);
     }
@@ -769,6 +783,34 @@ void ESPWiFiSensing::csi_callback_(
         self->mvs_3_confirmation_seen_.store(true, std::memory_order_release);
       }
       if (third.observation_added) {
+        // Silent hour requires no MVS1 or MVS3 confirmation or active hold.
+        const bool primary_held = self->mvs_confirmation_seen_.load(std::memory_order_acquire) &&
+            static_cast<uint32_t>(sample_now - self->mvs_last_confirmation_ms_.load()) <
+                self->motion_hold_time_ms_;
+        const bool learned_held = self->mvs_3_confirmation_seen_.load(std::memory_order_acquire) &&
+            static_cast<uint32_t>(sample_now - self->mvs_3_last_confirmation_ms_.load()) <
+                self->motion_hold_time_ms_;
+        const bool quiet_allowed = !result.motion && !third.motion &&
+            !primary_held && !learned_held;
+        self->mvs_3_algorithm_.observe_silence(sample_now, quiet_allowed);
+        const auto &noise = self->mvs_3_algorithm_.noise_learning();
+        const uint32_t accepted = noise.accepted_minutes();
+        self->silence_pending_minutes_.store(noise.provisional_minutes(), std::memory_order_relaxed);
+        self->silence_interruptions_.store(noise.interruptions(), std::memory_order_relaxed);
+        if (accepted != self->silence_last_snapshot_minute_ ||
+            (noise.ready() && !self->silence_validated_.load(std::memory_order_relaxed))) {
+          if (noise.ready()) {
+            size_t best[3]{};
+            noise.quietest_three(best);
+            for (size_t j=0; j<3; ++j) {
+              self->silence_best_bins_[j].store(static_cast<uint32_t>(best[j]), std::memory_order_relaxed);
+              self->silence_best_quality_[j].store(noise.quality(best[j]), std::memory_order_relaxed);
+            }
+          }
+          self->silence_last_snapshot_minute_ = accepted;
+        }
+        self->silence_accepted_minutes_.store(accepted, std::memory_order_relaxed);
+        self->silence_validated_.store(noise.ready(), std::memory_order_release);
         const auto &learn = self->mvs_3_algorithm_.learning();
         self->learn_quiet_.store(learn.quiet_blocks());
         self->learn_episodes_.store(learn.episodes());
