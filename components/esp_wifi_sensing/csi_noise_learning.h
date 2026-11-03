@@ -36,6 +36,7 @@ class CsiNoiseLearning {
     if (!started_) return;
     ++interruptions_;
     started_ = false;
+    session_validated_ = false;
     pending_minutes_ = 0;
     current_ = Minute{};
     for (auto &minute : pending_) minute = Minute{};
@@ -125,7 +126,7 @@ class CsiNoiseLearning {
   uint32_t began_at_{0}, minute_started_{0}, last_observation_{0};
   uint32_t accepted_minutes_{0}, interruptions_{0};
   size_t pending_minutes_{0};
-  bool started_{false}, ready_{false};
+  bool started_{false}, session_validated_{false}, ready_{false};
 
   static float noise_penalty_(uint64_t peaks, uint64_t persistent,
                               double intensity, uint64_t observations) {
@@ -140,7 +141,7 @@ class CsiNoiseLearning {
 
   void finish_minute_() {
     if (current_.observations == 0) { interrupt(); return; }
-    if (!ready_) {
+    if (!session_validated_) {
       if (pending_minutes_ < kMinutes)
         pending_[pending_minutes_++] = current_;
       if (pending_minutes_ == kMinutes &&
@@ -156,11 +157,16 @@ class CsiNoiseLearning {
             intensity[i] += pending_[m].intensity[i];
           }
         }
-        for (size_t i=0; i<kBins; ++i)
-          quality_[i] = 1.0f - noise_penalty_(peak[i], persistent[i],
-                                              intensity[i], total_obs);
-        accepted_minutes_ = kMinutes;
+        for (size_t i=0; i<kBins; ++i) {
+          const float new_quality = 1.0f - noise_penalty_(peak[i], persistent[i],
+                                                          intensity[i], total_obs);
+          // All new silent sessions must pass their own 60-minute validation.
+          // A previous verified baseline survives movement interruptions.
+          quality_[i] = ready_ ? 0.5f * quality_[i] + 0.5f * new_quality : new_quality;
+        }
+        accepted_minutes_ += kMinutes;
         ready_ = true;
+        session_validated_ = true;
         for (auto &minute : pending_) minute = Minute{};
       }
     } else {
