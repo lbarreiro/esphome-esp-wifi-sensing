@@ -193,6 +193,13 @@ int main() {
   size_t silent_top[3]{};
   silence.quietest_three(silent_top);
   assert(silent_top[0]!=0 && silent_top[1]!=0 && silent_top[2]!=0);
+  // After validation, every additional silent minute updates the baseline.
+  for(unsigned t=0;t<610;++t) {
+    silent_clock+=100;
+    for(size_t i=0;i<48;++i) quiet_energy[i]=0.000001f;
+    silence.observe(quiet_energy,l,silent_clock,true,8.1f);
+  }
+  assert(silence.accepted_minutes()==61);
   const float preserved=silence.quality(0);
   silence.interrupt();
   assert(silence.ready() && silence.provisional_minutes()==0);
@@ -201,13 +208,14 @@ int main() {
     silent_clock+=100;
     silence.observe(quiet_energy,l,silent_clock,true,8.1f);
   }
-  assert(silence.ready() && silence.accepted_minutes()==60);
+  assert(silence.ready() && silence.accepted_minutes()==61);
   Mvs3Priority ranked_with_noise;
   ranked_with_noise.set_noise_learning(&silence);
   assert(ranked_with_noise.refresh(varied));
   for(size_t j=0;j<ranked_with_noise.active_count();++j) {
     const size_t selected_bin=ranked_with_noise.top_bin(j);
     assert(varied.hits(selected_bin)>=5);  // mandatory movement eligibility
+    assert(selected_bin != 0);  // equally active yet noisy bin loses ranking
   }
 
   // Priority is never enabled with an incomplete or unqualified episode window.
