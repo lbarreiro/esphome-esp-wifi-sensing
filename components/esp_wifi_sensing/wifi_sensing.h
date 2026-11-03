@@ -206,6 +206,13 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> priority_hits_[2]{};
   std::atomic<float> priority_candidates_[2]{}, priority_weights_[2]{};
   std::atomic<bool> learn_raw_quiet_{false}, learn_held_{false};
+  // Compact noise diagnostics, copied from CSI context only on minute updates.
+  std::atomic<bool> silence_validated_{false};
+  std::atomic<uint32_t> silence_pending_minutes_{0}, silence_accepted_minutes_{0};
+  std::atomic<uint32_t> silence_interruptions_{0};
+  std::atomic<uint32_t> silence_best_bins_[3]{};
+  std::atomic<float> silence_best_quality_[3]{};
+  uint32_t silence_last_snapshot_minute_{0};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
   CsiPipeline pipeline_{};
