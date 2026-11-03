@@ -60,7 +60,7 @@ After a committed weight update MVS-3 independently reprojects its quiet
 reference and clears its filter/previous profile to prevent a synthetic
 temporal jump. This does not recalibrate or reset MVS1.
 
-## Two-bin priority (70/30)
+## Dynamic priority of two or three bins (70/30)
 
 The priority decision is **inactive** until at least two bins qualify under
 the existing rolling `5/8` verified quiet-to-motion recurrence rule. At the
@@ -72,6 +72,10 @@ the pair if two qualified alternatives exist; otherwise the 70/30 priority is
 disabled and the ordinary weighted 48-bin detector remains active.
 A previously disabled priority automatically reactivates as soon as two
 qualify, without waiting for a revision. A single qualified bin is not enough.
+When a third eligible bin qualifies at 5/8, it joins the 70% group immediately;
+the best eligible third bin outside the original pair is used. If that bin
+loses qualification, the group returns to two, or picks another qualified
+third. The two original selection slots retain their existing hysteresis.
 When both currently selected bins **remain qualified**, a replacement pair
 must beat the current pair's weakest candidate by at least 0.05 and stay
 best-ranked for **two consecutive eligible episodes**, avoiding frequent
@@ -81,19 +85,21 @@ filters and recalibrates its own quiet references, without resetting the
 existing 120-second ON hold or any MVS1 state.
 
 Once enabled, global MVS-3 decision energy is
-`0.70 * weighted_mean(energy[top2]) +
-0.30 * weighted_mean(energy[other46])`. Each group is separately normalized
-by its total learned weight. **The global 70/30 metric is applied to every
-scored observation whenever a qualified Top 2 exists**. It no longer requires
-both selected bins to respond at the same instant: even if one bin is quiet,
-the global detector still uses the 70/30 formula. **Before qualification**
-or whenever the Top 2 becomes inactive, the global score uses the ordinary
-weighted 48-bin mean. The global 70/30 and 48-bin metrics retain separate
-quiet references to avoid artificial jumps when the selected pair changes.
+`0.70 * weighted_mean(energy[selected2or3]) +
+0.30 * weighted_mean(energy[other46or45])`. Each group is separately
+normalized by its total learned weight. **The global 70/30 metric is applied
+to every scored observation while at least two qualified selected bins
+exist**. No simultaneous-response condition is imposed on the global rule.
+With two selected bins, 70% goes to the pair and 30% to the other 46;
+with three, 70% goes to the trio and 30% to the other 45.
+With zero or one qualified bin, the global score uses the ordinary weighted
+48-bin mean. The metrics retain separate quiet references, re-seeded on
+membership changes to prevent synthetic threshold jumps.
 
-In addition, the two selected bins have their own score, independently
-calibrated using their own learned quiet energies, and an independent rolling
-motion confirmation filter. **This independent confirmation path is unchanged**:
+In addition, the original first two selected bins have their own score,
+independently calibrated using their own learned quiet energies, and an
+independent rolling motion confirmation filter. **This independent two-bin
+confirmation path is unchanged even when a third is selected**:
 an observation counts as a priority hit only if BOTH bins independently
 respond at that moment AND the joint score meets the configured threshold.
 Like the global filter, this requires three
@@ -162,11 +168,72 @@ not just distinct human movements. The independent CSI packet-length
 diagnostic is unchanged.
 
 With the unrestricted global 70/30 weighting, `70_USADO` now reports
-how many scored observations happened while a qualified Top 2 existed;
+how many scored observations happened while a qualified 2-3-bin group existed;
 it no longer measures simultaneous reactions of the two individual bins.
-It will typically approach 100% during uninterrupted Top 2 qualification,
+It will typically approach 100% during uninterrupted 2-3-bin qualification,
 **not** indicate motion accuracy or simultaneous response. Independent Top 2
 confirmations still require both bins to react in the same observation.
+
+## Five native ESPHome entities for Home Assistant
+
+These optional entities use the same local CSI processing, without MQTT and
+without changing **any existing periodic or transition log format**. They are
+published via the ordinary Home Assistant ESPHome integration. The legacy
+minute log still says `TOP 2` and prints the first two selected carriers.
+The third selected carrier is available in the new `portadoras_top` entity.
+
+- `top3` (binary sensor): ON when **2 or 3** qualified carriers activate the
+  global 70/30 group, OFF below 2. The name TOP3 means the new rule, not
+  necessarily three carriers currently selected.
+- `ultima_minutos` (numeric): elapsed **whole minutes** since the last
+  actual MVS3 movement confirmation. Unknown until the first confirmation
+  since boot; updates at least once per minute and immediately on a change.
+- `via` (text): route of the **last** movement confirmation:
+  `GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS` or `SEM`. TOP2 continues
+  to mean the original independently gated first two carriers.
+- `portadoras_top` (text): exact selected carrier indexes, e.g. `6,17` or
+  `6,17,23`; empty when the priority group is inactive.
+- `portadora_mais_fraca` (numeric): the weakest current **candidate** index
+  among all 48, identical to `MIN/MAX: PIOR=#...` in the existing log.
+  Unknown until first CSI observation after boot.
+
+For an existing `esp_wifi_sensing: {id: wifi_sensing}`, **add** `top3`
+inside the existing ESP Wi-Fi Sensing `binary_sensor:` entry; append
+entries to existing `sensor:` and `text_sensor:` blocks (do not create
+duplicate top-level YAML keys):
+
+```yaml
+binary_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    motion:
+      name: CSI Motion 256 Reference
+    motion_3:
+      name: CSI Motion 256 Learned
+    top3:
+      name: MVS3 TOP3
+      entity_category: diagnostic
+
+sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    ultima_minutos:
+      name: MVS3 Ultima confirmacao
+      entity_category: diagnostic
+    portadora_mais_fraca:
+      name: MVS3 Portadora mais fraca
+      entity_category: diagnostic
+
+text_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    via:
+      name: MVS3 Via
+      entity_category: diagnostic
+    portadoras_top:
+      name: MVS3 Portadoras Top
+      entity_category: diagnostic
+```
 
 ## Update YAML
 
@@ -205,7 +272,7 @@ external_components:
 GitHub Actions runs the Python reference regression suite, host C++ tests,
 ESPHome YAML validation, and a full ESP-IDF firmware build.
 The C++ tests verify 90% convergence, bounded weights, quiet-only stability,
-recurrent transitions, top-2 qualification, single-bin noise rejection,
+recurrent transitions, 2-3-bin qualification, single-bin noise rejection,
 same-observation joint confirmation, fallback to the calibrated 48-bin
 metric, automatic replacement/reactivation after eligible episodes without
 a weight revision, and the independence of MVS1 from MVS-3 learning.
