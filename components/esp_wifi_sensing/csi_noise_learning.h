@@ -30,6 +30,19 @@ class CsiNoiseLearning {
   uint32_t interruptions() const { return interruptions_; }
   float quality(size_t i) const { return ready_ ? quality_[i] : 0.0f; }
 
+  // HA display ONLY. Retain the full 0..1 quality for the 50/50 TOP ranking.
+  // A naive round(quality * 5) would make almost every real bin 5/5;
+  // these fixed thresholds magnify the observed 0.9xx range instead.
+  // This is a descriptive grade, not a calibrated false-positive probability.
+  static uint8_t display_grade(float quality) {
+    if (!std::isfinite(quality) || quality < 0.91f) return 0;
+    if (quality < 0.93f) return 1;
+    if (quality < 0.95f) return 2;
+    if (quality < 0.97f) return 3;
+    if (quality < 0.99f) return 4;
+    return 5;
+  }
+
   // True if at least one of MVS1/MVS3 confirmed a detection, is in its
   // 120-second hold, or a CSI discontinuity prevented a trustworthy hour.
   void interrupt() {
