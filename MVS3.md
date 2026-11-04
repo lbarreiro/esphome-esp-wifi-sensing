@@ -256,13 +256,23 @@ The third selected carrier is available in the new `portadoras_top` entity.
 - `portadoras_top` (text): exact selected carrier indexes, e.g. `6,17` or
   `6,17,23`; empty when the priority group is inactive.
 - `top_classificacao` (text): selected carriers only, with
-  `bin:movement_rating_0_to_5/silence_quality_0_to_1`, separated by hyphens,
-  e.g. `12:3/0.960-17:4/0.970`. Movement rating is the existing
+  `bin:movement_rating_0_to_5/silence_grade_0_to_5`, separated by hyphens,
+  e.g. `12:3/3-17:4/4`. Movement rating is the existing
   normalized candidate (`candidate - 1`, clipped to 0..1) multiplied by
   5 and rounded, not the `5/8` eligibility hit count. A qualifying
-  movement history of at least 5/8 is still required. Until the first
-  validated silence hour, the score says `SEM`, for example
-  `17:1/SEM-7:1/SEM`; blank while fewer than two bins are selected.
+  movement history of at least 5/8 is still required. Silence is shown
+  on a fixed expanded 0..5 *display scale* to distinguish nearby
+  actual 0.9xx values: below 0.91 -> 0; [0.91,0.93) -> 1;
+  [0.93,0.95) -> 2; [0.95,0.97) -> 3; [0.97,0.99) -> 4;
+  0.99 or above -> 5. Thus 0.960 -> 3 and 0.970 -> 4.
+  The underlying continuous 0..1 silence values remain UNCHANGED in
+  memory and in the real 50/50 TOP selection formula; no sensitivity,
+  threshold, or learning behavior is altered. Grades are a display
+  convenience, NOT statistically calibrated noise or false-positive
+  probabilities; two nearby values may share a grade. The detailed
+  raw values remain in the silence diagnostic log.
+  Until the first validated silence hour, the score says `SEM`, for
+  example `17:1/SEM-7:1/SEM`; blank while fewer than two bins are selected.
   Published on a TOP membership change and at most every 60 seconds
   when any displayed value changes; does not add CSI calculations.
 - `portadora_mais_fraca` (numeric): the weakest current **candidate** index
