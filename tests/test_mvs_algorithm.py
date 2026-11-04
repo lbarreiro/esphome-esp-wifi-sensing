@@ -89,6 +89,13 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     assert "CONF_TOP3" in binary
     assert "ultima_minutos" in sensor and "portadora_mais_fraca" in sensor
     assert "portadoras_top" in text_sensor and "via" in text_sensor
+    assert "top_classificacao" in text_sensor
+    assert "set_top_classificacao_text_sensor" in (component / "wifi_sensing.h").read_text()
+    cpp = (component / "wifi_sensing.cpp").read_text()
+    assert "priority_top_movement_" in cpp and "priority_top_silence_" in cpp
+    assert '%u:%u/%.3f' in cpp
+    noise = (component / "csi_noise_learning.h").read_text()
+    assert "intensity / n" in noise and "intensity / peaks" not in noise
 
 def test_fixed_renewal_two_peaks():
     model=RadarModel()
