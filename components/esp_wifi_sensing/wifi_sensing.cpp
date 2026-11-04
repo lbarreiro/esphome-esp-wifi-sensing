@@ -152,7 +152,7 @@ void ESPWiFiSensing::setup() {
 void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
   if (top3_binary_sensor_ == nullptr && ultima_minutos_sensor_ == nullptr &&
       portadora_mais_fraca_sensor_ == nullptr && via_text_sensor_ == nullptr &&
-      portadoras_top_text_sensor_ == nullptr)
+      portadoras_top_text_sensor_ == nullptr && top_classificacao_text_sensor_ == nullptr)
     return;
 
   const bool seen = mvs_3_confirmation_seen_.load(std::memory_order_acquire);
@@ -195,6 +195,34 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
       }
       // Empty text means no qualified group, never a misleading "0" carrier.
       portadoras_top_text_sensor_->publish_state(carrier_ids);
+    }
+  }
+
+  if (top_classificacao_text_sensor_ != nullptr && (periodic || selection_changed)) {
+    // Each entry is "bin:movement(0..5)/silence(0..1)".
+    // Movement is the very same normalized candidate used by the 50/50
+    // selection rule; it is NOT the 5/8 qualification vote count.
+    // Hide silence ranking until a verified hour exists.
+    std::string ranking;
+    const bool silence_ready = silence_validated_.load(std::memory_order_acquire);
+    for (size_t i = 0; i < count && i < 3; ++i) {
+      const float candidate = priority_top_movement_[i].load(std::memory_order_relaxed);
+      const float movement = std::max(0.0f, std::min(1.0f, candidate - 1.0f));
+      const unsigned movement_5 = static_cast<unsigned>(std::lround(movement * 5.0f));
+      char item[24]{};
+      if (silence_ready) {
+        const float quality = priority_top_silence_[i].load(std::memory_order_relaxed);
+        std::snprintf(item, sizeof(item), "%u:%u/%.3f", static_cast<unsigned>(bins[i]),
+                      movement_5, static_cast<double>(quality));
+      } else {
+        std::snprintf(item, sizeof(item), "%u:%u/SEM", static_cast<unsigned>(bins[i]), movement_5);
+      }
+      if (!ranking.empty()) ranking += '-';
+      ranking += item;
+    }
+    if (initial || ranking != mvs3_ha_last_top_classificacao_) {
+      mvs3_ha_last_top_classificacao_ = ranking;
+      top_classificacao_text_sensor_->publish_state(ranking);
     }
   }
 
@@ -845,6 +873,14 @@ void ESPWiFiSensing::csi_callback_(
         self->priority_third_bin_.store(
             top_count == 3 ? static_cast<uint32_t>(self->mvs_3_algorithm_.priority_bin(2)) : 0,
             std::memory_order_relaxed);
+        // Snapshot all selected members before announcing the new TOP.
+        for (size_t j = 0; j < top_count && j < 3; ++j) {
+          const size_t selected_bin = self->mvs_3_algorithm_.priority_bin(j);
+          self->priority_top_movement_[j].store(learn.candidate(selected_bin),
+                                               std::memory_order_relaxed);
+          self->priority_top_silence_[j].store(noise.quality(selected_bin),
+                                              std::memory_order_relaxed);
+        }
         self->priority_count_.store(static_cast<uint32_t>(top_count), std::memory_order_release);
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
