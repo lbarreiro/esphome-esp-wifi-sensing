@@ -95,7 +95,8 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     assert "priority_top_movement_" in cpp and "priority_top_silence_" in cpp
     assert '%u:%u/%.3f' in cpp
     noise = (component / "csi_noise_learning.h").read_text()
-    assert "intensity / n" in noise and "intensity / peaks" not in noise
+    assert "std::min(1.0, intensity / n)" in noise
+    assert "std::min(1.0, intensity / peaks)" not in noise
 
 def test_fixed_renewal_two_peaks():
     model=RadarModel()
