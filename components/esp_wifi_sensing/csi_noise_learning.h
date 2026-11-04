@@ -132,11 +132,14 @@ class CsiNoiseLearning {
   static float noise_penalty_(uint64_t peaks, uint64_t persistent,
                               double intensity, uint64_t observations) {
     if (!observations) return 0.0f;
-    // Three equal terms: frequency, peak intensity, persistence in 3/8.
-    const float frequency = std::min(1.0, static_cast<double>(peaks) / observations);
-    const float strength = peaks ?
-        std::min(1.0, intensity / peaks) : 0.0;
-    const float persistence = std::min(1.0, static_cast<double>(persistent) / observations);
+    // Three equally weighted terms, each normalized by ALL quiet observations:
+    // frequency, capped peak intensity per observation, and 3/8 persistence.
+    // In particular, a single extreme peak can NEVER contribute 1/3 of the
+    // penalty by itself, as happened with the old intensity / peaks formula.
+    const double n = static_cast<double>(observations);
+    const float frequency = static_cast<float>(std::min(1.0, static_cast<double>(peaks) / n));
+    const float strength = static_cast<float>(std::min(1.0, intensity / n));
+    const float persistence = static_cast<float>(std::min(1.0, static_cast<double>(persistent) / n));
     return (frequency + strength + persistence) / 3.0f;
   }
 
