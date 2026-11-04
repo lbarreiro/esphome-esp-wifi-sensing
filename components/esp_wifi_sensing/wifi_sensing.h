@@ -64,6 +64,7 @@ class ESPWiFiSensing : public Component {
   void set_portadora_mais_fraca_sensor(sensor::Sensor *sensor) { portadora_mais_fraca_sensor_ = sensor; }
   void set_via_text_sensor(text_sensor::TextSensor *sensor) { via_text_sensor_ = sensor; }
   void set_portadoras_top_text_sensor(text_sensor::TextSensor *sensor) { portadoras_top_text_sensor_ = sensor; }
+  void set_top_classificacao_text_sensor(text_sensor::TextSensor *sensor) { top_classificacao_text_sensor_ = sensor; }
 
  protected:
   static void csi_callback_(
@@ -156,6 +157,8 @@ class ESPWiFiSensing : public Component {
   sensor::Sensor *portadora_mais_fraca_sensor_{nullptr};
   text_sensor::TextSensor *via_text_sensor_{nullptr};
   text_sensor::TextSensor *portadoras_top_text_sensor_{nullptr};
+  text_sensor::TextSensor *top_classificacao_text_sensor_{nullptr};
+  std::string mvs3_ha_last_top_classificacao_{};
   bool mvs3_ha_initialized_{false};
   uint32_t mvs3_ha_last_periodic_ms_{0};
   uint32_t mvs3_ha_last_confirmation_ms_{0};
@@ -200,6 +203,10 @@ class ESPWiFiSensing : public Component {
   std::atomic<bool> priority_active_{false};
   std::atomic<uint32_t> priority_count_{0};
   std::atomic<uint32_t> priority_third_bin_{0};
+  // Movement candidate and validated silence quality of the selected bins;
+  // updated inside CSI callback, read safely in ESPHome main loop.
+  std::atomic<float> priority_top_movement_[3]{};
+  std::atomic<float> priority_top_silence_[3]{};
   std::atomic<float> priority_score_{0};
   std::atomic<uint32_t> priority_confirmations_{0};
   std::atomic<uint32_t> priority_bins_[2]{};
