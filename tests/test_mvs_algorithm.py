@@ -93,7 +93,9 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     assert "set_top_classificacao_text_sensor" in (component / "wifi_sensing.h").read_text()
     cpp = (component / "wifi_sensing.cpp").read_text()
     assert "priority_top_movement_" in cpp and "priority_top_silence_" in cpp
-    assert '%u:%u/%.3f' in cpp
+    assert '%u:%u/%u' in cpp
+    assert '%u:%u/%.3f' not in cpp
+    assert "CsiNoiseLearning::display_grade(quality)" in cpp
     noise = (component / "csi_noise_learning.h").read_text()
     assert "std::min(1.0, intensity / n)" in noise
     assert "std::min(1.0, intensity / peaks)" not in noise
