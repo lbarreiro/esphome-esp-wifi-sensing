@@ -181,15 +181,21 @@ int main() {
   assert(!silence.ready() && silence.provisional_minutes()==0);
   for(unsigned t=0;t<36010;++t) {
     for(size_t i=0;i<48;++i) quiet_energy[i]=0.000001f;
-    // One carrier has frequent peaks, another only sporadic peaks.
+    // Compare frequent, sporadic, one extreme and repeated moderate peaks.
+    // A SINGLE extreme peak must NOT outweigh repeated moderate fluctuations.
     if(t%5==0) quiet_energy[0]=0.08f;
     if(t%200==0) quiet_energy[1]=0.08f;
+    if(t==1500) quiet_energy[3]=1.00f;  // one extreme in a full hour
+    if(t%30==0) quiet_energy[4]=0.08f;  // 1200 peaks in that hour
     silent_clock+=100;
     silence.observe(quiet_energy,l,silent_clock,true,8.1f);
   }
   assert(silence.ready() && silence.accepted_minutes()==60);
   assert(silence.quality(2)>silence.quality(1));
   assert(silence.quality(1)>silence.quality(0));
+  assert(silence.quality(3)>0.999f);  // one capped outlier is nearly free
+  assert(silence.quality(3)>silence.quality(4));
+  assert(silence.quality(4)<0.990f);  // recurring moderate peaks do matter
   size_t silent_top[3]{};
   silence.quietest_three(silent_top);
   assert(silent_top[0]!=0 && silent_top[1]!=0 && silent_top[2]!=0);
