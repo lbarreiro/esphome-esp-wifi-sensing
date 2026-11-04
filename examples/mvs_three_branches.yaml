@@ -71,3 +71,6 @@ text_sensor:
     portadoras_top:
       name: "MVS3 Portadoras Top"
       entity_category: diagnostic
+    top_classificacao:
+      name: "MVS3 TOP Classificacao"
+      entity_category: diagnostic
