@@ -199,7 +199,7 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
   }
 
   if (top_classificacao_text_sensor_ != nullptr && (periodic || selection_changed)) {
-    // Each entry is "bin:movement(0..5)/silence(0..1)".
+    // Each entry is "bin:movement(0..5)/silence_grade(0..5)".
     // Movement is the very same normalized candidate used by the 50/50
     // selection rule; it is NOT the 5/8 qualification vote count.
     // Hide silence ranking until a verified hour exists.
@@ -212,8 +212,9 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
       char item[24]{};
       if (silence_ready) {
         const float quality = priority_top_silence_[i].load(std::memory_order_relaxed);
-        std::snprintf(item, sizeof(item), "%u:%u/%.3f", static_cast<unsigned>(bins[i]),
-                      movement_5, static_cast<double>(quality));
+        const unsigned silence_5 = CsiNoiseLearning::display_grade(quality);
+        std::snprintf(item, sizeof(item), "%u:%u/%u", static_cast<unsigned>(bins[i]),
+                      movement_5, silence_5);
       } else {
         std::snprintf(item, sizeof(item), "%u:%u/SEM", static_cast<unsigned>(bins[i]), movement_5);
       }
