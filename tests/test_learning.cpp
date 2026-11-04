@@ -165,6 +165,18 @@ int main() {
   assert(std::fabs(varied.weights()[8]-(1.0f+0.90f*(varied.candidate(8)-1.0f)))<0.0001f);
   assert(varied.weights()[8]>1.8f);
 
+  // Public HA grading is only a presentation transform. Real 0..1
+  // noise quality stays continuous for TOP 50/50 selection.
+  assert(CsiNoiseLearning::display_grade(0.85f)==0);
+  assert(CsiNoiseLearning::display_grade(0.91f)==1);
+  assert(CsiNoiseLearning::display_grade(0.93f)==2);
+  assert(CsiNoiseLearning::display_grade(0.960f)==3);
+  assert(CsiNoiseLearning::display_grade(0.965f)==3);
+  assert(CsiNoiseLearning::display_grade(0.970f)==4);
+  assert(CsiNoiseLearning::display_grade(0.99f)==5);
+  assert(CsiNoiseLearning::display_grade(1.0f)==5);
+  assert(CsiNoiseLearning::display_grade(std::numeric_limits<float>::quiet_NaN())==0);
+
   // RAM-only noise learner: no score before 60 continuous quiet minutes,
   // three equal penalty components, and a real movement invalidates the
   // provisional hour without forgetting an already verified baseline.
