@@ -187,8 +187,12 @@ and global 70/30 energy weights do not change.
 Silence quality has an equal-weight three-component penalty:
 
 - **Frequency**: fraction of silent CSI observations with an individual peak.
-- **Intensity**: average normalized exceedance among silent peaks, capped
-  per peak to avoid unbounded penalties.
+- **Intensity**: capped normalized exceedance *summed across all quiet
+  observations*, with non-peak observations contributing zero. This fixes
+  the original `intensity / peaks` defect: one extreme isolated peak
+  cannot contribute 1/3 of the total penalty by itself, but recurring
+  peaks still accumulate intensity. Each peak contribution is capped
+  at 1 before aggregation.
 - **Persistence**: fraction of observations where at least three individual
   peaks fall within a rolling window of eight observations.
 
@@ -251,6 +255,16 @@ The third selected carrier is available in the new `portadoras_top` entity.
   to mean the original independently gated first two carriers.
 - `portadoras_top` (text): exact selected carrier indexes, e.g. `6,17` or
   `6,17,23`; empty when the priority group is inactive.
+- `top_classificacao` (text): selected carriers only, with
+  `bin:movement_rating_0_to_5/silence_quality_0_to_1`, separated by hyphens,
+  e.g. `12:3/0.960-17:4/0.970`. Movement rating is the existing
+  normalized candidate (`candidate - 1`, clipped to 0..1) multiplied by
+  5 and rounded, not the `5/8` eligibility hit count. A qualifying
+  movement history of at least 5/8 is still required. Until the first
+  validated silence hour, the score says `SEM`, for example
+  `17:1/SEM-7:1/SEM`; blank while fewer than two bins are selected.
+  Published on a TOP membership change and at most every 60 seconds
+  when any displayed value changes; does not add CSI calculations.
 - `portadora_mais_fraca` (numeric): the weakest current **candidate** index
   among all 48, identical to `MIN/MAX: PIOR=#...` in the existing log.
   Unknown until first CSI observation after boot.
@@ -290,6 +304,9 @@ text_sensor:
       entity_category: diagnostic
     portadoras_top:
       name: MVS3 Portadoras Top
+      entity_category: diagnostic
+    top_classificacao:
+      name: MVS3 TOP Classificacao
       entity_category: diagnostic
 ```
 
