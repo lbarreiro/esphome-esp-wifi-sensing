@@ -390,15 +390,17 @@ int main() {
           if(changed && path.active() && path.top_bin(0)>=38) reactivated=true;
         }
         if(ep==3) {
-          assert(suspended && !path.active()); // no pair has 5/8
-          assert(path.top_bin(0)==0 && path.top_bin(1)==0);
+          assert(!suspended && path.active()); // incumbents remain at 4/8
+          assert(learn.hits(path.top_bin(0))==4 && learn.hits(path.top_bin(1))==4);
+          assert(path.top_bin(0)<38 && path.top_bin(1)<38);
         }
         if(ep==4) {
-          assert(reactivated && path.active()); // replacements now have 5/8
+          assert(reactivated && path.active()); // new 5/8 carriers replace incumbents below 4/8
           assert(path.top_bin(0)>=38 && path.top_bin(1)>=38);
+          assert(learn.hits(0)<4 && learn.hits(1)<4);
         }
       }
-      assert(suspended && reactivated && path.active());
+      assert(!suspended && reactivated && path.active());
       assert(path.active_count()==3); // three new qualified bins are now used
       assert(learn.revisions()==revision_at_selection);
       assert(learn.recurrent_bins()>=2);
