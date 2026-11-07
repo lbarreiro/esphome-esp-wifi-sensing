@@ -413,8 +413,8 @@ int main() {
   run_exact_group(3);
 
   // Dynamic third bin: exactly two qualify first, a third reaches 5/8,
-  // then it drops below 5/8 while the original pair stays qualified.
-  // 70/30 must transition 2 -> 3 -> 2 without ever dropping to global48.
+  // then it falls to 4/8 (retained) and below 4/8 (removed) while the
+  // original pair stays qualified. 70/30 remains active throughout.
   CsiLearning dynamic; uint32_t dynamic_now=0;
   float dynamic_energy[48]{};
   for (unsigned i=0;i<3200;++i) {
@@ -423,7 +423,7 @@ int main() {
     dynamic.observe(dynamic_energy,dynamic_now,false,false);
   }
   Mvs3Priority dynamic_path;
-  for (unsigned ep=0;ep<17;++ep) {
+  for (unsigned ep=0;ep<18;++ep) {
     for (unsigned sample=0;sample<15;++sample) {
       for (size_t b=0;b<48;++b) dynamic_energy[b]=0.000001f;
       dynamic_energy[0]=dynamic_energy[1]=0.02f;
@@ -450,7 +450,12 @@ int main() {
       assert(dynamic_path.top_bin(2)==2);
     }
     if (ep==16) {
+      assert(dynamic_path.active() && dynamic_path.active_count()==3);
+      assert(dynamic_path.top_bin(2)==2 && dynamic.hits(2)==4);
+    }
+    if (ep==17) {
       assert(dynamic_path.active() && dynamic_path.active_count()==2);
+      assert(dynamic.hits(2)<4);
     }
   }
 
