@@ -18,6 +18,8 @@ class Mvs3Priority {
  public:
   static constexpr size_t kTop = 2;  // Independent confirmation retains its two-bin gate.
   static constexpr size_t kMaxTop = 3;  // Global 70/30 can consider three bins.
+  // Existing TOP members may be retained at 4/8 when fewer than two new bins qualify at 5/8.
+  static constexpr size_t kTopRetentionHits = 4;
   static constexpr size_t kBins = CsiLearning::kBins;
   static constexpr size_t kMaxWindow = 64;
   static constexpr float kTopShare = 0.70f;
@@ -58,25 +60,55 @@ class Mvs3Priority {
     if (!new_episode && !weights_changed) return false;
     last_eligible_episodes_ = eligible;
 
+    // Snapshot the previous TOP before any replacement. Only these members may
+    // use the 4/8 retention rule; new members still need the normal 5/8 gate.
+    const size_t previous_count = active_count_;
+    size_t previous_top[kMaxTop]{};
+    for (size_t j = 0; j < previous_count; ++j) previous_top[j] = top_[j];
+
     size_t best[kTop]{};
-    // Preserve the exact legacy order until the first verified silent hour.
-    bool enough = false;
-    if (noise_ == nullptr || !noise_->ready()) {
-      enough = learning.select_top_two(best);
-    } else if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
-      size_t found = 0;
-      for (size_t i=0; i<kBins; ++i) {
+    size_t found = 0;
+    if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
+      // Select every normal 5/8-qualified carrier first, using the existing
+      // movement/silence ranking unchanged.
+      for (size_t i = 0; i < kBins; ++i) {
         if (!qualified_(learning, i)) continue;
-        size_t pos=0;
-        while (pos<found && (rank_(learning,best[pos])>rank_(learning,i) ||
-            (rank_(learning,best[pos])==rank_(learning,i) && best[pos]<i))) ++pos;
-        if (pos>=kTop) continue;
-        if (found<kTop) ++found;
-        for (size_t j=found-1;j>pos;--j) best[j]=best[j-1];
-        best[pos]=i;
+        size_t pos = 0;
+        while (pos < found && (rank_(learning, best[pos]) > rank_(learning, i) ||
+            (rank_(learning, best[pos]) == rank_(learning, i) && best[pos] < i))) ++pos;
+        if (pos >= kTop) continue;
+        if (found < kTop) ++found;
+        for (size_t j = found - 1; j > pos; --j) best[j] = best[j - 1];
+        best[pos] = i;
       }
-      enough = found==kTop;
+
+      // If fewer than two carriers qualify at 5/8, fill the remaining pair
+      // positions only with incumbents still at 4/8. Their existing silence
+      // quality helps choose which incumbent fills a missing position.
+      if (active_ && found < kTop) {
+        size_t fallback[kMaxTop]{};
+        size_t fallback_count = 0;
+        for (size_t j = 0; j < previous_count; ++j) {
+          const size_t i = previous_top[j];
+          if (learning.hits(i) < kTopRetentionHits) continue;
+          bool already_selected = false;
+          for (size_t k = 0; k < found; ++k)
+            already_selected = already_selected || best[k] == i;
+          if (already_selected) continue;
+
+          size_t pos = fallback_count;
+          while (pos > 0 && rank_(learning, fallback[pos - 1]) < rank_(learning, i)) {
+            fallback[pos] = fallback[pos - 1];
+            --pos;
+          }
+          fallback[pos] = i;
+          ++fallback_count;
+        }
+        for (size_t j = 0; j < fallback_count && found < kTop; ++j)
+          best[found++] = fallback[j];
+      }
     }
+    const bool enough = found == kTop;
     if (!enough) {
       pending_count_ = 0;
       if (!active_) return false;
@@ -100,14 +132,12 @@ class Mvs3Priority {
       return third_changed;
     }
 
-    bool old_qualified = active_;
+    bool old_retained = active_;
     if (active_) {
-      for (size_t j = 0; j < kTop; ++j) {
-        const size_t i = top_[j];
-        old_qualified = old_qualified && qualified_(learning, i);
-      }
+      for (size_t j = 0; j < kTop; ++j)
+        old_retained = old_retained && learning.hits(top_[j]) >= kTopRetentionHits;
     }
-    if (old_qualified) {
+    if (old_retained) {
       // Only consider a better-ranked pair if the improvement is meaningful
       // and verified in successive independent episodes.
       if (!new_episode ||
@@ -138,7 +168,7 @@ class Mvs3Priority {
     top_[0] = best[0];
     top_[1] = best[1];
     active_count_ = kTop;
-    refresh_third_(learning);
+    refresh_third_(learning, previous_top, previous_count);
     pending_count_ = 0;
     recalibrate_(learning);
     return true;
@@ -238,9 +268,10 @@ class Mvs3Priority {
     return 0.5f * movement + 0.5f * noise_->quality(i);
   }
 
-  // Always consider a third qualified bin immediately when it exists.
-  // Keep the original two-member selection and its stability hysteresis.
-  bool refresh_third_(const CsiLearning &learning) {
+  // Prefer any new 5/8-qualified third bin. If none exists, retain a previous
+  // TOP member at 4/8; silence quality orders these fallback members.
+  bool refresh_third_(const CsiLearning &learning, const size_t *previous_top = nullptr,
+                      size_t previous_count = 0) {
     if (!active_) return false;
     size_t best_third = kBins;
     for (size_t i = 0; i < kBins; ++i) {
@@ -249,6 +280,19 @@ class Mvs3Priority {
       if (best_third == kBins || rank_(learning,i) > rank_(learning,best_third) ||
           (rank_(learning,i) == rank_(learning,best_third) && i < best_third))
         best_third = i;
+    }
+    if (best_third == kBins) {
+      if (previous_top != nullptr) {
+        for (size_t j = 0; j < previous_count; ++j) {
+          const size_t i = previous_top[j];
+          if (i == top_[0] || i == top_[1] || learning.hits(i) < kTopRetentionHits) continue;
+          if (best_third == kBins || rank_(learning, i) > rank_(learning, best_third))
+            best_third = i;
+        }
+      } else if (active_count_ >= kMaxTop && top_[2] != top_[0] && top_[2] != top_[1] &&
+                 learning.hits(top_[2]) >= kTopRetentionHits) {
+        best_third = top_[2];
+      }
     }
     const size_t next_count = best_third == kBins ? kTop : kMaxTop;
     const bool changed = active_count_ != next_count ||
