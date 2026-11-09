@@ -16,7 +16,11 @@ namespace esp_wifi_sensing {
 
 class ExperimentalMvsAlgorithm {
  public:
-  ExperimentalMvsAlgorithm() { priority_.set_noise_learning(&noise_); }
+  ExperimentalMvsAlgorithm() {
+    priority_.set_noise_learning(&noise_);
+    shadow_priority_.set_noise_learning(&noise_);
+    shadow_priority_.set_multiplicative_ranking(true);
+  }
   void observe_silence(uint32_t now, bool both_detectors_quiet) {
     if (noise_observation_valid_) {
       noise_.observe(raw_energy_, learning_, now, both_detectors_quiet, threshold_);
@@ -36,6 +40,8 @@ class ExperimentalMvsAlgorithm {
   uint32_t priority_confirmations() const { return priority_.confirmations(); }
   size_t priority_bin(size_t i) const { return priority_.top_bin(i); }
   size_t priority_count() const { return priority_.active_count(); }
+  size_t shadow_priority_bin(size_t i) const { return shadow_priority_.top_bin(i); }
+  size_t shadow_priority_count() const { return shadow_priority_.active_count(); }
   // The last confirmation route is kept even if the ON hold expires.
   // 0=none, 1=global 48-bin, 2=global 70/30, 3=independent Top2, 4=both.
   uint8_t last_confirmation_route() const { return last_confirmation_route_; }
@@ -45,8 +51,8 @@ class ExperimentalMvsAlgorithm {
 
   static constexpr size_t kBins = 48;
   static constexpr size_t kMaxFilterWindow = 64;
-  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); priority_.set_filter_window(count); }
-  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); priority_.set_filter_count(count); }
+  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); priority_.set_filter_window(count); shadow_priority_.set_filter_window(count); }
+  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); priority_.set_filter_count(count); shadow_priority_.set_filter_count(count); }
   void set_update_interval(uint32_t ms) { update_interval_ms_ = ms; }
   void set_quiet_boot_samples(uint32_t count) { quiet_boot_samples_ = count; }
   void set_quiet_alpha(float alpha) { quiet_alpha_ = alpha; }
@@ -58,6 +64,8 @@ class ExperimentalMvsAlgorithm {
   CsiLearning learning_{};
   CsiNoiseLearning noise_{};
   Mvs3Priority priority_{};
+  // Read-only comparison path. Its selection never feeds motion decisions.
+  Mvs3Priority shadow_priority_{};
   bool noise_observation_valid_{false};
   float raw_energy_[kBins]{};
   float selected_energy_{0};

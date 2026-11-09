@@ -22,6 +22,7 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
       for (float &v : accumulator_) v = 0;
       clear_filter_();
       priority_.reset_after_gap();
+      shadow_priority_.reset_after_gap();
     }
     packet_seen_ = true;
     last_packet_ms_ = now_ms;
@@ -128,6 +129,9 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
   // guarded weight revisions. An invalid pair is replaced immediately if two
   // qualified bins exist; a merely better pair requires stable evidence.
   const bool selection_changed = priority_.refresh(learning_, revised);
+  // Maintain an independent shadow TOP on the same episode/revision cadence.
+  // It does not participate in detection, thresholding, or filter resets.
+  (void) shadow_priority_.refresh(learning_, revised);
   if (revised || selection_changed) {
     // A change of bins OR weights changes the effective score scale. Reset
     // MVS3's own profiles/filters; preserve the current 120-second ON hold.

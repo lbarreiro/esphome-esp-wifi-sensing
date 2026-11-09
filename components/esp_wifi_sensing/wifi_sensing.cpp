@@ -164,6 +164,12 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
     priority_bins_[1].load(std::memory_order_relaxed),
     priority_third_bin_.load(std::memory_order_relaxed)
   };
+  const uint32_t shadow_count = shadow_priority_count_.load(std::memory_order_acquire);
+  const uint32_t shadow_bins[3] = {
+    shadow_priority_bins_[0].load(std::memory_order_relaxed),
+    shadow_priority_bins_[1].load(std::memory_order_relaxed),
+    shadow_priority_bins_[2].load(std::memory_order_relaxed)
+  };
   const bool weakest_valid = learn_observations_.load(std::memory_order_relaxed) > 0;
   const uint32_t weakest = learn_low_.load(std::memory_order_relaxed);
   const bool initial = !mvs3_ha_initialized_;
@@ -171,7 +177,11 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
       static_cast<uint32_t>(now - mvs3_ha_last_periodic_ms_) >= 60000U;
   const bool selection_changed = initial || count != mvs3_ha_last_count_ ||
       bins[0] != mvs3_ha_last_bins_[0] || bins[1] != mvs3_ha_last_bins_[1] ||
-      bins[2] != mvs3_ha_last_bins_[2];
+      bins[2] != mvs3_ha_last_bins_[2] ||
+      shadow_count != mvs3_ha_last_shadow_count_ ||
+      shadow_bins[0] != mvs3_ha_last_shadow_bins_[0] ||
+      shadow_bins[1] != mvs3_ha_last_shadow_bins_[1] ||
+      shadow_bins[2] != mvs3_ha_last_shadow_bins_[2];
   const bool confirmation_changed = initial || seen != mvs3_ha_last_seen_ ||
       (seen && confirmed_at != mvs3_ha_last_confirmation_ms_);
   const bool route_changed = initial || route != mvs3_ha_last_route_;
@@ -184,16 +194,25 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
     if (top3_binary_sensor_ != nullptr)
       top3_binary_sensor_->publish_state(count >= 2);
     if (portadoras_top_text_sensor_ != nullptr) {
-      char carrier_ids[16]{};
-      if (count == 2) {
-        std::snprintf(carrier_ids, sizeof(carrier_ids), "%u,%u",
-                      static_cast<unsigned>(bins[0]), static_cast<unsigned>(bins[1]));
-      } else if (count >= 3) {
-        std::snprintf(carrier_ids, sizeof(carrier_ids), "%u,%u,%u",
-                      static_cast<unsigned>(bins[0]), static_cast<unsigned>(bins[1]),
-                      static_cast<unsigned>(bins[2]));
-      }
-      // Empty text means no qualified group, never a misleading "0" carrier.
+      char carrier_ids[32]{};
+      char active_ids[12]{};
+      char shadow_ids[12]{};
+      const auto format_ids = [](char *out, size_t capacity, uint32_t n, const uint32_t *ids) {
+        if (n >= 3) {
+          std::snprintf(out, capacity, "%u,%u,%u",
+                        static_cast<unsigned>(ids[0]), static_cast<unsigned>(ids[1]),
+                        static_cast<unsigned>(ids[2]));
+        } else if (n == 2) {
+          std::snprintf(out, capacity, "%u,%u",
+                        static_cast<unsigned>(ids[0]), static_cast<unsigned>(ids[1]));
+        } else {
+          std::snprintf(out, capacity, "SEM");
+        }
+      };
+      format_ids(active_ids, sizeof(active_ids), count, bins);
+      format_ids(shadow_ids, sizeof(shadow_ids), shadow_count, shadow_bins);
+      std::snprintf(carrier_ids, sizeof(carrier_ids), "%s/%s", active_ids, shadow_ids);
+      // Antes/depois da barra: TOP ativo / TOP de comparação pela nova fórmula.
       portadoras_top_text_sensor_->publish_state(carrier_ids);
     }
   }
@@ -257,6 +276,8 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
   mvs3_ha_last_route_ = route;
   mvs3_ha_last_count_ = count;
   for (size_t i = 0; i < 3; ++i) mvs3_ha_last_bins_[i] = bins[i];
+  mvs3_ha_last_shadow_count_ = shadow_count;
+  for (size_t i = 0; i < 3; ++i) mvs3_ha_last_shadow_bins_[i] = shadow_bins[i];
   mvs3_ha_last_weakest_ = weakest;
   mvs3_ha_last_weakest_valid_ = weakest_valid;
   mvs3_ha_initialized_ = true;
@@ -883,6 +904,15 @@ void ESPWiFiSensing::csi_callback_(
                                               std::memory_order_relaxed);
         }
         self->priority_count_.store(static_cast<uint32_t>(top_count), std::memory_order_release);
+        const size_t shadow_top_count = self->mvs_3_algorithm_.shadow_priority_count();
+        for (size_t j = 0; j < 3; ++j) {
+          const size_t shadow_bin = j < shadow_top_count
+              ? self->mvs_3_algorithm_.shadow_priority_bin(j) : 0;
+          self->shadow_priority_bins_[j].store(static_cast<uint32_t>(shadow_bin),
+                                               std::memory_order_relaxed);
+        }
+        self->shadow_priority_count_.store(static_cast<uint32_t>(shadow_top_count),
+                                           std::memory_order_release);
         self->learn_observations_.store(static_cast<uint32_t>(self->mvs_3_algorithm_.observation_count()));
         self->learn_window_.store(static_cast<uint32_t>(learn.episode_window_count()));
         self->learn_recurrent_.store(learn.recurrent_bins());
