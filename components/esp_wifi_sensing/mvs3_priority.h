@@ -31,7 +31,6 @@ class Mvs3Priority {
   size_t top_bin(size_t index) const { return index < active_count_ ? top_[index] : 0; }
   size_t active_count() const { return active_count_; }
   void set_noise_learning(const CsiNoiseLearning *noise) { noise_ = noise; }
-  void set_multiplicative_ranking(bool enabled) { multiplicative_ranking_ = enabled; }
   float score() const { return score_; }
   uint32_t confirmations() const { return confirmations_; }
 
@@ -141,12 +140,10 @@ class Mvs3Priority {
     if (old_retained) {
       // Only consider a better-ranked pair if the improvement is meaningful
       // and verified in successive independent episodes.
-      const float replacement_margin = multiplicative_ranking_ ? 0.05f :
-          ((noise_ && noise_->ready()) ? 0.025f : 0.05f);
       if (!new_episode ||
           rank_(learning,best[1]) < std::min(rank_(learning,top_[0]),
                                              rank_(learning,top_[1])) +
-              replacement_margin) {
+              ((noise_ && noise_->ready()) ? 0.025f : 0.05f)) {
         pending_count_ = 0;
         const bool third_changed = refresh_third_(learning);
         if (weights_changed || third_changed) recalibrate_(learning);
@@ -263,15 +260,12 @@ class Mvs3Priority {
            learning.candidate(i) > 1.0001f;
   }
 
-  // The active selector retains its existing ranking. The parallel shadow
-  // selector ranks the same 5/8-qualified bins as movement * (1 + silence),
-  // with silence quality kept on its existing continuous 0..1 scale.
+  // 50% movement score (existing candidate mapped to 0..1) and
+  // 50% silence quality. 5/8 movement remains a mandatory gate.
   float rank_(const CsiLearning &learning, size_t i) const {
     const float movement = std::max(0.0f, std::min(1.0f, learning.candidate(i) - 1.0f));
-    const float silence = noise_ != nullptr ? noise_->quality(i) : 0.0f;
-    if (multiplicative_ranking_) return movement * (1.0f + silence);
     if (noise_ == nullptr || !noise_->ready()) return learning.candidate(i);
-    return 0.5f * movement + 0.5f * silence;
+    return 0.5f * movement + 0.5f * noise_->quality(i);
   }
 
   // Prefer any new 5/8-qualified third bin. If none exists, retain a previous
@@ -330,7 +324,6 @@ class Mvs3Priority {
   uint8_t pending_count_{0};
   uint32_t last_eligible_episodes_{0};
   bool active_{false};
-  bool multiplicative_ranking_{false};
   bool filter_[kMaxWindow]{};
   size_t window_{8}, next_{0};
   uint8_t count_{3}, hits_{0};

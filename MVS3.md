@@ -121,17 +121,6 @@ The 70/30 percentages apply to the **two groups' decision energy**, not
 to the individual learning coefficients. There are still 48 learned weights
 and all 48 bins contribute to the global decision.
 
-## CSI stall recovery
-
-The MVS path reports a stall when valid observations stop. If no CSI packets
-arrive for 60 seconds, the component disables and reinitializes the CSI
-receiver. Recovery attempts are at least 60 seconds apart; if reinitialization
-cannot start because Wi-Fi is unavailable, the normal startup retry continues.
-MVS-1 and MVS-3 seed a fresh temporal profile after a long packet gap, so the
-first returning observation cannot be mistaken for a motion spike. MVS-3 also
-discards the interrupted provisional silence interval through its existing
-continuity handling.
-
 ## Large topic headers, every 60 seconds
 
 The existing **60-second interval** is preserved. Each line starts directly
@@ -264,13 +253,9 @@ The third selected carrier is available in the new `portadoras_top` entity.
 - `via` (text): route of the **last** movement confirmation:
   `GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS` or `SEM`. TOP2 continues
   to mean the original independently gated first two carriers.
-- `portadoras_top` (text): two comma-separated groups divided by a slash:
-  the active TOP using the unchanged selector, then a read-only shadow TOP
-  ranked by `movement * (1 + silence_quality)`. For example,
-  `6,17,23/6,30,41`. Both selectors use the same 5/8 qualification,
-  incumbent 4/8 retention and two-episode replacement stability; only the
-  ranking formula differs. `SEM` marks an inactive group.
-- `top_classificacao` (text): the active selected carriers only, with
+- `portadoras_top` (text): exact selected carrier indexes, e.g. `6,17` or
+  `6,17,23`; empty when the priority group is inactive.
+- `top_classificacao` (text): selected carriers only, with
   `bin:movement_rating_0_to_5/silence_grade_0_to_5`, separated by hyphens,
   e.g. `12:3/3-17:4/4`. Movement rating is the existing
   normalized candidate (`candidate - 1`, clipped to 0..1) multiplied by
@@ -287,10 +272,9 @@ The third selected carrier is available in the new `portadoras_top` entity.
   probabilities; two nearby values may share a grade. The detailed
   raw values remain in the silence diagnostic log.
   Until the first validated silence hour, the score says `SEM`, for
-  example `17:1/SEM-7:1/SEM`; blank while fewer than two active bins are selected.
-  Published on an active or shadow TOP membership change and at most every
-  60 seconds when any displayed value changes; the shadow calculation adds no
-  CSI parsing or observations.
+  example `17:1/SEM-7:1/SEM`; blank while fewer than two bins are selected.
+  Published on a TOP membership change and at most every 60 seconds
+  when any displayed value changes; does not add CSI calculations.
 - `portadora_mais_fraca` (numeric): the weakest current **candidate** index
   among all 48, identical to `MIN/MAX: PIOR=#...` in the existing log.
   Unknown until first CSI observation after boot.

@@ -8,17 +8,6 @@ namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing::driver";
 
-void EspIdfCsiDriver::stop() {
-  if (!this->started_) return;
-
-  const esp_err_t err = esp_wifi_set_csi(false);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "esp_wifi_set_csi(false) failed during recovery: %s", esp_err_to_name(err));
-  }
-  // Clear the local state even on error so start() retries the full setup.
-  this->started_ = false;
-}
-
 bool EspIdfCsiDriver::start(void *ctx, wifi_csi_cb_t callback) {
   if (this->started_) {
     return true;

@@ -48,9 +48,6 @@ class MvsAlgorithm {
   uint16_t accumulator_count_{0};
   bool timing_started_{false};
   uint32_t last_observation_ms_{0};
-  bool packet_seen_{false};
-  uint32_t last_packet_ms_{0};
-  size_t last_packet_count_{0};
   size_t total_observations_{0};
 
   float previous_profile_[kBins]{};

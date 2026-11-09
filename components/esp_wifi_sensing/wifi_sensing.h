@@ -148,7 +148,6 @@ class ESPWiFiSensing : public Component {
   uint32_t mvs_diagnostic_started_ms_{0};
   std::atomic<uint32_t> mvs_last_observation_ms_{0};
   uint32_t mvs_last_stall_log_ms_{0};
-  uint32_t mvs_last_csi_recovery_ms_{0};
   uint32_t ping_interval_ms_{100};
   esp_ping_handle_t ping_handle_{nullptr};
 
@@ -167,8 +166,6 @@ class ESPWiFiSensing : public Component {
   uint32_t mvs3_ha_last_route_{UINT32_MAX};
   uint32_t mvs3_ha_last_count_{UINT32_MAX};
   uint32_t mvs3_ha_last_bins_[3]{UINT32_MAX, UINT32_MAX, UINT32_MAX};
-  uint32_t mvs3_ha_last_shadow_count_{UINT32_MAX};
-  uint32_t mvs3_ha_last_shadow_bins_[3]{UINT32_MAX, UINT32_MAX, UINT32_MAX};
   uint32_t mvs3_ha_last_weakest_{UINT32_MAX};
   uint32_t mvs3_ha_last_age_minutes_{UINT32_MAX};
   bool mvs3_ha_last_seen_{false};
@@ -207,9 +204,6 @@ class ESPWiFiSensing : public Component {
   std::atomic<bool> priority_active_{false};
   std::atomic<uint32_t> priority_count_{0};
   std::atomic<uint32_t> priority_third_bin_{0};
-  // Separate shadow TOP snapshot; never used by the detection path.
-  std::atomic<uint32_t> shadow_priority_count_{0};
-  std::atomic<uint32_t> shadow_priority_bins_[3]{};
   // Movement candidate and validated silence quality of the selected bins;
   // updated inside CSI callback, read safely in ESPHome main loop.
   std::atomic<float> priority_top_movement_[3]{};
