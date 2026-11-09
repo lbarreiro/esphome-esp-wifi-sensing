@@ -127,6 +127,8 @@ namespace esphome {
 namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing";
+static constexpr uint32_t MVS_CSI_RECOVERY_TIMEOUT_MS = 60000U;
+static constexpr uint32_t MVS_CSI_RECOVERY_RETRY_MS = 60000U;
 
 
 void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
@@ -443,6 +445,26 @@ void ESPWiFiSensing::loop() {
     const uint32_t packet_age = csi_elapsed_or_zero(now, last_packet ? last_packet : this->mvs_diagnostic_started_ms_);
     const uint32_t accepted_age = csi_elapsed_or_zero(now, last_accepted ? last_accepted : this->mvs_diagnostic_started_ms_);
     const uint32_t observation_age = csi_elapsed_or_zero(now, last_observation ? last_observation : this->mvs_diagnostic_started_ms_);
+
+    // A short CSI pause can happen during mesh roaming. Only restart the CSI
+    // receiver after a full minute without packets, and rate-limit retries.
+    if (packet_age >= MVS_CSI_RECOVERY_TIMEOUT_MS &&
+        (this->mvs_last_csi_recovery_ms_ == 0 ||
+         static_cast<uint32_t>(now - this->mvs_last_csi_recovery_ms_) >= MVS_CSI_RECOVERY_RETRY_MS)) {
+      this->mvs_last_csi_recovery_ms_ = now;
+      this->mvs_last_stall_log_ms_ = now;
+      ESP_LOGW(TAG, "MVS CSI recovery: restarting receiver after %u ms without packets",
+               static_cast<unsigned>(packet_age));
+      this->driver_.stop();
+      this->csi_started_ = false;
+      if (this->start_csi_()) {
+        this->csi_started_ = true;
+        ESP_LOGI(TAG, "MVS CSI recovery: receiver reinitialized; waiting for CSI packets");
+      } else {
+        ESP_LOGW(TAG, "MVS CSI recovery: restart did not complete; normal startup retry will continue");
+      }
+    }
+
     if (observation_age > 5000U && static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
       if (packet_age > 5000U) {
         ESP_LOGW(TAG, "MVS CSI stalled: no CSI packets for %u ms", static_cast<unsigned>(packet_age));

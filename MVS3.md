@@ -121,6 +121,17 @@ The 70/30 percentages apply to the **two groups' decision energy**, not
 to the individual learning coefficients. There are still 48 learned weights
 and all 48 bins contribute to the global decision.
 
+## CSI stall recovery
+
+The MVS path reports a stall when valid observations stop. If no CSI packets
+arrive for 60 seconds, the component disables and reinitializes the CSI
+receiver. Recovery attempts are at least 60 seconds apart; if reinitialization
+cannot start because Wi-Fi is unavailable, the normal startup retry continues.
+MVS-1 and MVS-3 seed a fresh temporal profile after a long packet gap, so the
+first returning observation cannot be mistaken for a motion spike. MVS-3 also
+discards the interrupted provisional silence interval through its existing
+continuity handling.
+
 ## Large topic headers, every 60 seconds
 
 The existing **60-second interval** is preserved. Each line starts directly

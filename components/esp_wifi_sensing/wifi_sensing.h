@@ -148,6 +148,7 @@ class ESPWiFiSensing : public Component {
   uint32_t mvs_diagnostic_started_ms_{0};
   std::atomic<uint32_t> mvs_last_observation_ms_{0};
   uint32_t mvs_last_stall_log_ms_{0};
+  uint32_t mvs_last_csi_recovery_ms_{0};
   uint32_t ping_interval_ms_{100};
   esp_ping_handle_t ping_handle_{nullptr};
 

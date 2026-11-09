@@ -9,6 +9,26 @@ constexpr float QUIET_FLOOR = 0.003f;
 }  // namespace
 
 MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) {
+  if (packet.layout_supported && packet.count >= kBins) {
+    const bool gap = packet_seen_ &&
+        (static_cast<uint32_t>(now_ms - last_packet_ms_) >
+             std::max<uint32_t>(2000U, update_interval_ms_ * 3U) ||
+         packet.count != last_packet_count_);
+    if (gap) {
+      // Seed a fresh temporal profile after CSI resumes; do not compare across
+      // a long radio gap and turn the handoff into a false motion peak.
+      have_previous_profile_ = false;
+      accumulator_count_ = 0;
+      timing_started_ = false;
+      for (float &value : accumulator_) value = 0.0f;
+      clear_filter_();
+      last_score_ = 0.0f;
+    }
+    packet_seen_ = true;
+    last_packet_ms_ = now_ms;
+    last_packet_count_ = packet.count;
+  }
+
   float frame[kBins]{};
   if (!this->make_frame_(packet, frame)) {
     return MvsResult{this->quiet_samples_ >= this->quiet_boot_samples_, this->motion_state_, this->last_score_, false,
@@ -22,7 +42,13 @@ MvsResult MvsAlgorithm::process(const ParsedCsiPacket &packet, uint32_t now_ms) 
   }
   this->total_observations_++;
 
+  const bool had_profile = this->have_previous_profile_;
   const float jitter = this->temporal_jitter_(observation);
+  if (!had_profile && this->total_observations_ > 1) {
+    // The first observation after a gap only seeds the profile; it is not a
+    // motion decision or a new quiet-baseline sample.
+    return MvsResult{false, false, 0.0f, true, this->total_observations_};
+  }
   if (!this->have_previous_profile_) {
     return MvsResult{false, false, 0.0f, true, this->total_observations_};
   }
