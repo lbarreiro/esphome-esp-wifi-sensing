@@ -74,4 +74,19 @@ bool EspIdfCsiDriver::start(void *ctx, wifi_csi_cb_t callback) {
 }
 
 }  // namespace esp_wifi_sensing
+
+bool EspIdfCsiDriver::restart(void *ctx, wifi_csi_cb_t callback) {
+  if (this->started_) {
+    const esp_err_t err = esp_wifi_set_csi(false);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "esp_wifi_set_csi(false) before restart failed: %s", esp_err_to_name(err));
+      return false;
+    }
+    this->started_ = false;
+  }
+
+  return this->start(ctx, callback);
+}
+
+
 }  // namespace esphome
