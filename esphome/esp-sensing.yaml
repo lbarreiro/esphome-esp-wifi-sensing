@@ -32,9 +32,9 @@ external_components:
   - source:
       type: git
       url: https://github.com/lbarreiro/esphome-esp-wifi-sensing
-      ref: v1.0
+      ref: e8054ea6bbf6d7db46b4bcdc3a376facf98671d6
     components: [esp_wifi_sensing]
-    refresh: never
+    refresh: 1d
 
 esp_wifi_sensing:
   id: wifi_sensing
