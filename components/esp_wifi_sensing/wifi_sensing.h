@@ -220,6 +220,7 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> silence_interruptions_{0};
   std::atomic<uint32_t> silence_best_bins_[3]{};
   std::atomic<float> silence_best_quality_[3]{};
+  std::atomic<float> silence_quality_[48]{};
   uint32_t silence_last_snapshot_minute_{0};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
