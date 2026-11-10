@@ -1,0 +1,116 @@
+# Pacote ESPHome do XIAO ESP32-C6 com MVS3.
+# A configuração específica da instalação (nome, threshold, Wi-Fi e API)
+# fica no YAML local.
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: Laboratorio de experiências nucleares
+  # XIAO ESP32-C6:
+  # GPIO3 LOW  -> ativa o controlo do RF switch
+  # GPIO14 HIGH -> seleciona a antena externa (U.FL)
+  on_boot:
+    priority: 800
+    then:
+      - output.turn_off: rf_switch_power
+      - delay: 100ms
+      - output.turn_on: rf_switch_select
+
+esp32:
+  variant: ESP32C6
+  framework:
+    type: esp-idf
+    components:
+      - espressif/esp-radar==0.3.4
+    sdkconfig_options:
+      CONFIG_LWIP_IPV6: "y"
+      CONFIG_ESP_WIFI_CSI_ENABLED: "y"
+    advanced:
+      flash_chip: generic
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/lbarreiro/esphome-esp-wifi-sensing
+      ref: v1.0
+    components: [esp_wifi_sensing]
+    refresh: never
+
+esp_wifi_sensing:
+  id: wifi_sensing
+  algorithm: mvs
+  threshold: ${mvs_threshold}
+  gain_compensation: false
+  motion_hold_time: 120s
+  filter_window: 8
+  filter_count: 3
+  update_interval: 100ms
+  quiet_boot_samples: 20
+  quiet_alpha: 0.01
+  quiet_update_limit: 3.0
+  ping_interval: 100ms
+
+# Controlo do RF switch do XIAO ESP32-C6
+output:
+  - platform: gpio
+    pin: GPIO3
+    id: rf_switch_power
+  - platform: gpio
+    pin: GPIO14
+    id: rf_switch_select
+
+switch:
+  - platform: gpio
+    id: motion_led
+    pin:
+      number: GPIO15
+      inverted: true
+    restore_mode: ALWAYS_OFF
+
+binary_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    motion:
+      id: motion_detected
+      name: "CSI Motion"
+      on_state:
+        then:
+          - if:
+              condition:
+                binary_sensor.is_on: motion_detected
+              then:
+                - switch.turn_on: motion_led
+              else:
+                - switch.turn_off: motion_led
+    motion_3:
+      name: "CSI Motion 256 Learned"
+      id: csi_movimento_3
+    top3:
+      name: "MVS3 TOP3"
+      entity_category: diagnostic
+
+sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    ultima_minutos:
+      name: "MVS3 Ultima confirmacao"
+      entity_category: diagnostic
+    portadora_mais_fraca:
+      name: "MVS3 Portadora mais fraca"
+      entity_category: diagnostic
+
+text_sensor:
+  - platform: esp_wifi_sensing
+    esp_wifi_sensing_id: wifi_sensing
+    via:
+      name: "MVS3 Via"
+      entity_category: diagnostic
+    portadoras_top:
+      name: "MVS3 Portadoras Top"
+      entity_category: diagnostic
+    top_classificacao:
+      name: "MVS3 TOP Classificacao"
+      entity_category: diagnostic
+
+logger:
+  level: DEBUG
