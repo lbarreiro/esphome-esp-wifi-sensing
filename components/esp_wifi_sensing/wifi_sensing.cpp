@@ -128,6 +128,9 @@ namespace esp_wifi_sensing {
 
 static const char *const TAG = "esp_wifi_sensing";
 
+// Recover CSI only after a prolonged outage; retry at most every five minutes.
+static constexpr uint32_t kMvsCsiStallTimeoutMs = 5U * 60U * 1000U;
+
 
 void ESPWiFiSensing::set_gain_compensation_enabled(bool enabled) {
   this->gain_compensation_enabled_ = enabled;
@@ -440,10 +443,17 @@ void ESPWiFiSensing::loop() {
     const uint32_t packet_age = csi_elapsed_or_zero(now, last_packet ? last_packet : this->mvs_diagnostic_started_ms_);
     const uint32_t accepted_age = csi_elapsed_or_zero(now, last_accepted ? last_accepted : this->mvs_diagnostic_started_ms_);
     const uint32_t observation_age = csi_elapsed_or_zero(now, last_observation ? last_observation : this->mvs_diagnostic_started_ms_);
-    if (observation_age > 5000U && static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= 30000U) {
-      if (packet_age > 5000U) {
-        ESP_LOGW(TAG, "MVS CSI stalled: no CSI packets for %u ms", static_cast<unsigned>(packet_age));
-      } else if (accepted_age > 5000U) {
+    if (observation_age >= kMvsCsiStallTimeoutMs &&
+        static_cast<uint32_t>(now - this->mvs_last_stall_log_ms_) >= kMvsCsiStallTimeoutMs) {
+      if (packet_age >= kMvsCsiStallTimeoutMs) {
+        ESP_LOGW(TAG, "MVS CSI stalled: no CSI packets for %u ms; attempting receiver recovery",
+                 static_cast<unsigned>(packet_age));
+        if (this->driver_.restart(this, ESPWiFiSensing::csi_callback_)) {
+          ESP_LOGI(TAG, "MVS CSI receiver restarted after prolonged packet stall");
+        } else {
+          ESP_LOGW(TAG, "MVS CSI receiver restart failed; will retry in five minutes");
+        }
+      } else if (accepted_age >= kMvsCsiStallTimeoutMs) {
         ESP_LOGW(TAG, "MVS CSI stalled: packets received but unsupported/rejected for %u ms (rejected=%u)",
                  static_cast<unsigned>(accepted_age), static_cast<unsigned>(this->mvs_rejected_packets_.load(std::memory_order_relaxed)));
       } else {
