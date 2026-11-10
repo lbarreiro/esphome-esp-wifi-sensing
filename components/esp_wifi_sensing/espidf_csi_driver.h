@@ -10,6 +10,7 @@ namespace esp_wifi_sensing {
 class EspIdfCsiDriver {
  public:
   bool start(void *ctx, wifi_csi_cb_t callback);
+  bool restart(void *ctx, wifi_csi_cb_t callback);
 
  private:
   bool started_{false};
