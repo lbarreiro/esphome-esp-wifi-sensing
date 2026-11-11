@@ -274,10 +274,22 @@ class Mvs3Priority {
     return position;
   }
 
-  bool selection_better_(const CsiLearning &learning, size_t a, size_t b) const {
+  bool was_top_member_(size_t bin, const size_t *previous_top, size_t previous_count) const {
+    for (size_t j = 0; j < previous_count; ++j)
+      if (previous_top[j] == bin) return true;
+    return false;
+  }
+
+  bool selection_better_(const CsiLearning &learning, size_t a, size_t b,
+                         const size_t *previous_top, size_t previous_count) const {
     const size_t a_position = silence_position_(a);
     const size_t b_position = silence_position_(b);
     if (a_position != b_position) return a_position < b_position;
+    // A new carrier must have a strictly better silence position to evict a
+    // retainable incumbent; equal positions preserve TOP continuity.
+    const bool a_incumbent = was_top_member_(a, previous_top, previous_count);
+    const bool b_incumbent = was_top_member_(b, previous_top, previous_count);
+    if (a_incumbent != b_incumbent) return a_incumbent;
     if (learning.candidate(a) != learning.candidate(b))
       return learning.candidate(a) > learning.candidate(b);
     return a < b;
@@ -300,15 +312,12 @@ class Mvs3Priority {
       // candidate pool at 4/8; below 4/8 it is removed even if no replacement
       // exists. Rank this combined pool by silence position across all 48.
       for (size_t i = 0; i < kBins; ++i) {
-        const bool incumbent = [&]() {
-          for (size_t j = 0; j < previous_count; ++j)
-            if (previous_top[j] == i) return true;
-          return false;
-        }();
+        const bool incumbent = was_top_member_(i, previous_top, previous_count);
         const bool retainable = active_ && incumbent && learning.hits(i) >= kTopRetentionHits;
         if (!qualified_(learning, i) && !retainable) continue;
         size_t pos = 0;
-        while (pos < selected_count && !selection_better_(learning, i, selected[pos])) ++pos;
+        while (pos < selected_count &&
+               !selection_better_(learning, i, selected[pos], previous_top, previous_count)) ++pos;
         if (pos >= kMaxTop) continue;
         if (selected_count < kMaxTop) ++selected_count;
         for (size_t j = selected_count - 1; j > pos; --j) selected[j] = selected[j - 1];
