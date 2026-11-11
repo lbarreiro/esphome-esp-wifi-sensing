@@ -55,6 +55,14 @@ class Mvs3Priority {
   // This prevents small ranking oscillations from churning the Top 2.
   // Returns true only when membership or activation actually changes.
   bool refresh(const CsiLearning &learning, bool weights_changed = false) {
+    // Until the one-hour silence baseline is verified, preserve the original
+    // movement-based selection, hysteresis, and 4/8 retention behavior.
+    if (noise_ != nullptr && noise_->ready())
+      return refresh_by_silence_(learning, weights_changed);
+    return refresh_legacy_(learning, weights_changed);
+  }
+
+  bool refresh_legacy_(const CsiLearning &learning, bool weights_changed = false) {
     const uint32_t eligible = learning.eligible_episodes();
     const bool new_episode = eligible != last_eligible_episodes_;
     if (!new_episode && !weights_changed) return false;
@@ -255,6 +263,85 @@ class Mvs3Priority {
   }
 
  private:
+  // Zero-based ordinal among all 48 carriers: 0 is the highest silence score.
+  // Exact ties share an ordinal and are resolved by movement only for a stable
+  // display order; a tie can never displace an incumbent.
+  size_t silence_position_(size_t bin) const {
+    const float quality = noise_->quality(bin);
+    size_t position = 0;
+    for (size_t i = 0; i < kBins; ++i)
+      if (noise_->quality(i) > quality) ++position;
+    return position;
+  }
+
+  bool selection_better_(const CsiLearning &learning, size_t a, size_t b) const {
+    const size_t a_position = silence_position_(a);
+    const size_t b_position = silence_position_(b);
+    if (a_position != b_position) return a_position < b_position;
+    if (learning.candidate(a) != learning.candidate(b))
+      return learning.candidate(a) > learning.candidate(b);
+    return a < b;
+  }
+
+  bool refresh_by_silence_(const CsiLearning &learning, bool weights_changed) {
+    const uint32_t eligible = learning.eligible_episodes();
+    const bool new_episode = eligible != last_eligible_episodes_;
+    if (!new_episode && !weights_changed) return false;
+    last_eligible_episodes_ = eligible;
+
+    const size_t previous_count = active_count_;
+    size_t previous_top[kMaxTop]{};
+    for (size_t j = 0; j < previous_count; ++j) previous_top[j] = top_[j];
+
+    size_t selected[kMaxTop]{};
+    size_t selected_count = 0;
+    if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
+      // New members enter only after 5/8. An incumbent may remain in the
+      // candidate pool at 4/8; below 4/8 it is removed even if no replacement
+      // exists. Rank this combined pool by silence position across all 48.
+      for (size_t i = 0; i < kBins; ++i) {
+        const bool incumbent = [&]() {
+          for (size_t j = 0; j < previous_count; ++j)
+            if (previous_top[j] == i) return true;
+          return false;
+        }();
+        const bool retainable = active_ && incumbent && learning.hits(i) >= kTopRetentionHits;
+        if (!qualified_(learning, i) && !retainable) continue;
+        size_t pos = 0;
+        while (pos < selected_count && !selection_better_(learning, i, selected[pos])) ++pos;
+        if (pos >= kMaxTop) continue;
+        if (selected_count < kMaxTop) ++selected_count;
+        for (size_t j = selected_count - 1; j > pos; --j) selected[j] = selected[j - 1];
+        selected[pos] = i;
+      }
+    }
+
+    if (selected_count < kTop) {
+      const bool changed = active_;
+      active_ = false;
+      active_count_ = 0;
+      for (size_t j = 0; j < kMaxTop; ++j) top_[j] = 0;
+      pending_count_ = 0;
+      if (changed) recalibrate_(learning);
+      return changed;
+    }
+
+    bool membership_changed = !active_ || active_count_ != selected_count;
+    bool order_changed = !active_;
+    for (size_t j = 0; j < selected_count; ++j) {
+      if (j >= active_count_ || top_[j] != selected[j]) order_changed = true;
+      bool present = false;
+      for (size_t k = 0; k < active_count_; ++k) present = present || top_[k] == selected[j];
+      if (!present) membership_changed = true;
+    }
+    active_ = true;
+    active_count_ = selected_count;
+    for (size_t j = 0; j < kMaxTop; ++j) top_[j] = j < selected_count ? selected[j] : 0;
+    pending_count_ = 0;
+    if (membership_changed || weights_changed) recalibrate_(learning);
+    return membership_changed || order_changed;
+  }
+
   bool qualified_(const CsiLearning &learning, size_t i) const {
     return learning.hits(i) >= CsiLearning::kMinHits &&
            learning.candidate(i) > 1.0001f;

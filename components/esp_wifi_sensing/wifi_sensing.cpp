@@ -379,7 +379,8 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_discarded_.load()), static_cast<unsigned>(learn_hold_resets_.load()),
           static_cast<unsigned>(learn_gaps_.load()));
 
-        // Added diagnostic line; all existing log formats remain unchanged.
+        // Show the selected carriers' silence positions among all 48 bins.
+        // The raw per-bin 0..1 scores are intentionally not dumped anymore.
         if (silence_validated_.load(std::memory_order_acquire)) {
           ESP_LOGI(TAG, "SILENCIO: VALIDADO | MINUTOS=%u | TOP3_SILENCIOSAS=#%u [%.3f] #%u [%.3f] #%u [%.3f] | INTERRUPCOES=%u",
             static_cast<unsigned>(silence_accepted_minutes_.load()),
@@ -387,28 +388,28 @@ void ESPWiFiSensing::loop() {
             static_cast<unsigned>(silence_best_bins_[1].load()), silence_best_quality_[1].load(),
             static_cast<unsigned>(silence_best_bins_[2].load()), silence_best_quality_[2].load(),
             static_cast<unsigned>(silence_interruptions_.load()));
+          char top_positions[96]{};
+          size_t used = 0;
+          const uint32_t selected_count = std::min<uint32_t>(priority_count_.load(), 3U);
+          for (uint32_t j = 0; j < selected_count; ++j) {
+            const uint32_t bin = j < 2 ? priority_bins_[j].load() : priority_third_bin_.load();
+            const float quality = silence_quality_[bin].load(std::memory_order_relaxed);
+            uint32_t position = 0;
+            for (uint32_t i = 0; i < 48; ++i)
+              if (silence_quality_[i].load(std::memory_order_relaxed) > quality) ++position;
+            const int written = std::snprintf(top_positions + used, sizeof(top_positions) - used,
+                                              "%s#%u=%u/48", j == 0 ? "" : " ",
+                                              static_cast<unsigned>(bin),
+                                              static_cast<unsigned>(position + 1));
+            if (written < 0 || static_cast<size_t>(written) >= sizeof(top_positions) - used) break;
+            used += static_cast<size_t>(written);
+          }
+          ESP_LOGI(TAG, "SILENCIO TOP: %s", selected_count == 0 ? "TOP INATIVO" : top_positions);
         } else {
           ESP_LOGI(TAG, "SILENCIO: PROVISORIO %u/60min | TOP3_SILENCIOSAS=PENDENTE | INTERRUPCOES=%u",
             static_cast<unsigned>(silence_pending_minutes_.load()),
             static_cast<unsigned>(silence_interruptions_.load()));
-        }
-        if (silence_validated_.load(std::memory_order_acquire)) {
-          for (size_t group = 0; group < 2; ++group) {
-            char qualities[256]{};
-            size_t used = 0;
-            for (size_t offset = 0; offset < 24; ++offset) {
-              const size_t bin = group * 24 + offset;
-              const int written = std::snprintf(
-                  qualities + used, sizeof(qualities) - used, "%s%u=%.3f",
-                  offset == 0 ? "" : ";",
-                  static_cast<unsigned>(bin), silence_quality_[bin].load(std::memory_order_relaxed));
-              if (written < 0 || static_cast<size_t>(written) >= sizeof(qualities) - used) break;
-              used += static_cast<size_t>(written);
-            }
-            ESP_LOGI(TAG, "SILENCIO Q[%u-%u]: %s",
-                     static_cast<unsigned>(group * 24),
-                     static_cast<unsigned>(group * 24 + 23), qualities);
-          }
+          ESP_LOGI(TAG, "SILENCIO TOP: SEM CLASSIFICACAO (TOP continua com selecao atual)");
         }
       }
       publish_mvs3_ha_diagnostics_(now);

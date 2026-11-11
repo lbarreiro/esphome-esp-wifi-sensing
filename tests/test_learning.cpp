@@ -230,10 +230,27 @@ int main() {
   Mvs3Priority ranked_with_noise;
   ranked_with_noise.set_noise_learning(&silence);
   assert(ranked_with_noise.refresh(varied));
+  size_t expected_silent[3]{};
+  size_t expected_count=0;
+  for (size_t i=0;i<48;++i) {
+    if (varied.hits(i)<5 || varied.candidate(i)<=1.0001f) continue;
+    size_t pos=0;
+    while (pos<expected_count &&
+           (silence.quality(expected_silent[pos])>silence.quality(i) ||
+            (silence.quality(expected_silent[pos])==silence.quality(i) &&
+             varied.candidate(expected_silent[pos])>=varied.candidate(i)))) ++pos;
+    if (pos>=3) continue;
+    if (expected_count<3) ++expected_count;
+    for (size_t j=expected_count-1;j>pos;--j) expected_silent[j]=expected_silent[j-1];
+    expected_silent[pos]=i;
+  }
+  assert(ranked_with_noise.active_count()==expected_count);
   for(size_t j=0;j<ranked_with_noise.active_count();++j) {
     const size_t selected_bin=ranked_with_noise.top_bin(j);
     assert(varied.hits(selected_bin)>=5);  // mandatory movement eligibility
-    assert(selected_bin != 0);  // equally active yet noisy bin loses ranking
+    assert(selected_bin==expected_silent[j]); // rank by silence among all 48
+    if (j>0) assert(silence.quality(ranked_with_noise.top_bin(j-1)) >=
+                    silence.quality(selected_bin));
   }
 
   // Priority is never enabled with an incomplete or unqualified episode window.
@@ -246,6 +263,13 @@ int main() {
   assert(priority.refresh(varied));
   assert(priority.active());
   assert(priority.active_count()==3); // third qualifying bin joins 70/30
+  CsiNoiseLearning unready_silence;
+  Mvs3Priority before_silence;
+  before_silence.set_noise_learning(&unready_silence);
+  assert(before_silence.refresh(varied));
+  assert(before_silence.active_count()==priority.active_count());
+  for (size_t j=0;j<priority.active_count();++j)
+    assert(before_silence.top_bin(j)==priority.top_bin(j));
   bool selected[48]{};
   for (size_t j=0;j<priority.active_count();++j) {
     const auto b=priority.top_bin(j);
