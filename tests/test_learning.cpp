@@ -178,8 +178,8 @@ int main() {
   assert(CsiNoiseLearning::display_grade(std::numeric_limits<float>::quiet_NaN())==0);
 
   // RAM-only noise learner: no score before 60 continuous quiet minutes,
-  // three equal penalty components, and a real movement invalidates the
-  // provisional hour without forgetting an already verified baseline.
+  // then score only the rolling ten-minute window. Movement invalidates the
+  // provisional hour without erasing the last verified score.
   CsiNoiseLearning silence;
   uint32_t silent_clock=0;
   float quiet_energy[48]{};
@@ -199,6 +199,7 @@ int main() {
     if(t%200==0) quiet_energy[1]=0.08f;
     if(t==1500) quiet_energy[3]=1.00f;  // one extreme in a full hour
     if(t%30==0) quiet_energy[4]=0.08f;  // 1200 peaks in that hour
+    if(t<30000 && t%30==0) quiet_energy[5]=0.08f; // noise only in first 50 minutes
     silent_clock+=100;
     silence.observe(quiet_energy,l,silent_clock,true,8.1f);
   }
@@ -208,25 +209,47 @@ int main() {
   assert(silence.quality(3)>0.999f);  // one capped outlier is nearly free
   assert(silence.quality(3)>silence.quality(4));
   assert(silence.quality(4)<0.990f);  // recurring moderate peaks do matter
+  assert(std::fabs(silence.quality(5)-silence.quality(2))<0.000001f);
+  // The first 50 minutes validate continuity but do not enter the first score.
   size_t silent_top[3]{};
   silence.quietest_three(silent_top);
   assert(silent_top[0]!=0 && silent_top[1]!=0 && silent_top[2]!=0);
-  // After validation, every additional silent minute updates the baseline.
-  for(unsigned t=0;t<610;++t) {
+  // After validation, each minute recomputes from the newest ten minute
+  // summaries. After the boundary sample history has also aged out, clean
+  // ten-minute data must exactly match a fresh clean reference.
+  const float noisy_window_quality=silence.quality(4);
+  for(unsigned t=0;t<6710;++t) {
     silent_clock+=100;
     for(size_t i=0;i<48;++i) quiet_energy[i]=0.000001f;
     silence.observe(quiet_energy,l,silent_clock,true,8.1f);
   }
-  assert(silence.accepted_minutes()==61);
-  const float preserved=silence.quality(0);
+  assert(silence.accepted_minutes()==71);
+  assert(silence.quality(4)>noisy_window_quality);
+  CsiNoiseLearning clean_reference;
+  uint32_t clean_clock=0;
+  for(unsigned t=0;t<36010;++t) {
+    clean_clock+=100;
+    clean_reference.observe(quiet_energy,l,clean_clock,true,8.1f);
+  }
+  assert(clean_reference.ready());
+  assert(std::fabs(silence.quality(4)-clean_reference.quality(4))<0.000001f);
+  const float preserved=silence.quality(4);
   silence.interrupt();
   assert(silence.ready() && silence.provisional_minutes()==0);
-  assert(silence.quality(0)==preserved);
+  assert(silence.quality(4)==preserved);
+  // The previous verified classification remains during the next hour.
   for(unsigned t=0;t<610;++t) {
     silent_clock+=100;
     silence.observe(quiet_energy,l,silent_clock,true,8.1f);
   }
-  assert(silence.ready() && silence.accepted_minutes()==61);
+  assert(silence.ready() && silence.accepted_minutes()==71);
+  assert(silence.quality(4)==preserved);
+  for(unsigned t=0;t<59*610;++t) {
+    silent_clock+=100;
+    silence.observe(quiet_energy,l,silent_clock,true,8.1f);
+  }
+  assert(silence.ready() && silence.accepted_minutes()==131);
+  assert(std::fabs(silence.quality(4)-clean_reference.quality(4))<0.000001f);
   Mvs3Priority ranked_with_noise;
   ranked_with_noise.set_noise_learning(&silence);
   assert(ranked_with_noise.refresh(varied));

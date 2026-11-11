@@ -382,7 +382,7 @@ void ESPWiFiSensing::loop() {
         // Show the selected carriers' silence positions among all 48 bins.
         // The raw per-bin 0..1 scores are intentionally not dumped anymore.
         if (silence_validated_.load(std::memory_order_acquire)) {
-          ESP_LOGI(TAG, "SILENCIO: VALIDADO | MINUTOS=%u | TOP3_SILENCIOSAS=#%u [%.3f] #%u [%.3f] #%u [%.3f] | INTERRUPCOES=%u",
+          ESP_LOGI(TAG, "SILENCIO: VALIDADO | MINUTOS=%u | JANELA=10MIN | TOP3_SILENCIOSAS=#%u [%.3f] #%u [%.3f] #%u [%.3f] | INTERRUPCOES=%u",
             static_cast<unsigned>(silence_accepted_minutes_.load()),
             static_cast<unsigned>(silence_best_bins_[0].load()), silence_best_quality_[0].load(),
             static_cast<unsigned>(silence_best_bins_[1].load()), silence_best_quality_[1].load(),

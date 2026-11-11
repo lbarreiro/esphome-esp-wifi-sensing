@@ -20,7 +20,7 @@ class CsiNoiseLearning {
   static constexpr uint32_t kMinuteMs = 60000U;
   static constexpr uint32_t kHourMs = 3600000U;
   static constexpr size_t kMinutes = 60;
-  static constexpr size_t kWindow = 8;
+  static constexpr size_t kWindow = 10;
   static constexpr float kEpsilon = 1.0e-4f;
   static constexpr float kFloor = 0.003f;
 
@@ -51,6 +51,7 @@ class CsiNoiseLearning {
     started_ = false;
     session_validated_ = false;
     pending_minutes_ = 0;
+    window_next_ = 0;
     // The pending slot counter invalidates old minutes; avoid wiping 24 KiB
     // in the time-sensitive Wi-Fi callback on every movement transition.
     current_ = Minute{};
@@ -132,7 +133,8 @@ class CsiNoiseLearning {
     uint16_t persistent[kBins]{};
     float intensity[kBins]{};
   };
-  // Exactly 60 provisional 1-minute summaries, RAM only (~24 KiB).
+  // The 60 provisional summaries are reused as the validated rolling window;
+  // no additional per-minute buffers are needed.
   Minute pending_[kMinutes]{};
   Minute current_{};
   uint8_t recent_[kBins]{};
@@ -140,6 +142,7 @@ class CsiNoiseLearning {
   uint32_t began_at_{0}, minute_started_{0}, last_observation_{0};
   uint32_t accepted_minutes_{0}, interruptions_{0};
   size_t pending_minutes_{0};
+  size_t window_next_{0};
   bool started_{false}, session_validated_{false}, ready_{false};
 
   static float noise_penalty_(uint64_t peaks, uint64_t persistent,
@@ -156,6 +159,27 @@ class CsiNoiseLearning {
     return (frequency + strength + persistence) / 3.0f;
   }
 
+  void recompute_quality_from_window_() {
+    uint64_t total_obs = 0;
+    for (size_t m = 0; m < kWindow; ++m)
+      total_obs += pending_[m].observations;
+    if (!total_obs) return;
+
+    for (size_t i = 0; i < kBins; ++i) {
+      uint64_t peaks = 0, persistent = 0;
+      double intensity = 0.0;
+      for (size_t m = 0; m < kWindow; ++m) {
+        peaks += pending_[m].peaks[i];
+        persistent += pending_[m].persistent[i];
+        intensity += pending_[m].intensity[i];
+      }
+      // Recalculate from only the current ten-minute window. Do not blend
+      // with the previous score: data leaves completely when its minute ages
+      // out of the window.
+      quality_[i] = 1.0f - noise_penalty_(peaks, persistent, intensity, total_obs);
+    }
+  }
+
   void finish_minute_() {
     if (current_.observations == 0) { interrupt(); return; }
     if (!session_validated_) {
@@ -163,38 +187,23 @@ class CsiNoiseLearning {
         pending_[pending_minutes_++] = current_;
       if (pending_minutes_ == kMinutes &&
           static_cast<uint32_t>(last_observation_ - began_at_) >= kHourMs) {
-        uint64_t total_obs = 0;
-        uint64_t peak[kBins]{}, persistent[kBins]{};
-        double intensity[kBins]{};
-        for (size_t m=0; m<kMinutes; ++m) {
-          total_obs += pending_[m].observations;
-          for (size_t i=0; i<kBins; ++i) {
-            peak[i] += pending_[m].peaks[i];
-            persistent[i] += pending_[m].persistent[i];
-            intensity[i] += pending_[m].intensity[i];
-          }
-        }
-        for (size_t i=0; i<kBins; ++i) {
-          const float new_quality = 1.0f - noise_penalty_(peak[i], persistent[i],
-                                                          intensity[i], total_obs);
-          // All new silent sessions must pass their own 60-minute validation.
-          // A previous verified baseline survives movement interruptions.
-          quality_[i] = ready_ ? 0.5f * quality_[i] + 0.5f * new_quality : new_quality;
-        }
+        // The hour validates silence. Its last ten minute summaries provide
+        // the first scoring window; older minutes do not affect the score.
+        for (size_t m = 0; m < kWindow; ++m)
+          pending_[m] = pending_[kMinutes - kWindow + m];
+        window_next_ = 0;
+        recompute_quality_from_window_();
         accepted_minutes_ += kMinutes;
         ready_ = true;
         session_validated_ = true;
-        // The hour is now consolidated; old provisional slots need no wipe.
+        // The first ten entries now form the rolling score window.
 
       }
     } else {
-      // Keep learning while silence continues, with bounded memory.
-      for (size_t i=0; i<kBins; ++i) {
-        const float new_quality = 1.0f -
-            noise_penalty_(current_.peaks[i], current_.persistent[i],
-                           current_.intensity[i], current_.observations);
-        quality_[i] = 0.98f * quality_[i] + 0.02f * new_quality;
-      }
+      // Keep exactly the ten newest complete minute summaries and re-score.
+      pending_[window_next_] = current_;
+      window_next_ = (window_next_ + 1) % kWindow;
+      recompute_quality_from_window_();
       ++accepted_minutes_;
     }
   }

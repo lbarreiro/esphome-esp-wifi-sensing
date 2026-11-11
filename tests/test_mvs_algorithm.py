@@ -105,6 +105,10 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     noise = (component / "csi_noise_learning.h").read_text()
     assert "std::min(1.0, intensity / n)" in noise
     assert "std::min(1.0, intensity / peaks)" not in noise
+    assert "static constexpr size_t kWindow = 10;" in noise
+    assert "recompute_quality_from_window_" in noise
+    assert "0.98f * quality_" not in noise
+    assert "JANELA=10MIN" in cpp
 
 def test_fixed_renewal_two_peaks():
     model=RadarModel()

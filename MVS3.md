@@ -204,11 +204,14 @@ per-bin score is normalized against the existing learned quiet-energy reference.
 Noise data stays **provisional in RAM for 60 consecutive minute blocks**.
 The entire hour is invalidated if either detector confirms movement or
 its 120-second hold remains active, or if CSI continuity is lost. No incomplete
-hour contributes to noise ranking. A qualified hour is consolidated into an
-in-memory noise reference; subsequent silent minutes continue updating it.
-After a movement interruption, the last **validated** reference remains, but
-a new quiet session must independently complete another full hour before it
-can update the reference again. Nothing is written to flash.
+hour contributes to noise ranking. Once the hour validates, the initial score
+uses only its last **10 minute blocks**. Every subsequent silent minute shifts
+the rolling window by one block and recalculates all 48 scores from scratch;
+the previous score is not blended into the new one. A block stops affecting a
+carrier as soon as it leaves the ten-minute window. After a movement
+interruption, the last **validated** reference remains while a new quiet session
+must independently complete another full hour; the new session then replaces
+the scores using its latest ten minutes. Nothing is written to flash.
 
 Priority group selection is still refreshed on new eligible movement episodes
 or movement weight revisions, not on every quiet CSI frame, avoiding silent
@@ -221,7 +224,7 @@ A **new** minute log line, without replacing existing log lines, reports:
 
 ```text
 SILENCIO: PROVISORIO 17/60min | TOP3_SILENCIOSAS=PENDENTE | INTERRUPCOES=2
-SILENCIO: VALIDADO | MINUTOS=61 | TOP3_SILENCIOSAS=#2 [1.000] #11 [0.997] #30 [0.995] | INTERRUPCOES=2
+SILENCIO: VALIDADO | MINUTOS=61 | JANELA=10MIN | TOP3_SILENCIOSAS=#2 [1.000] #11 [0.997] #30 [0.995] | INTERRUPCOES=2
 ```
 
 The displayed *silence-only* top three are the three quietest of **all 48**
