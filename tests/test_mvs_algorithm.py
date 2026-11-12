@@ -95,13 +95,15 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     assert "priority_top_movement_" in cpp and "priority_top_silence_" in cpp
     assert '%u:%u/%u' in cpp
     assert '%u:%u/%.3f' not in cpp
-    assert "CsiNoiseLearning::display_grade(quality)" in cpp
+    assert "silence_position" in cpp
+    assert "silence_eligible_position_" in cpp
+    assert "SILENCIO ELEGIVEIS: %s" in cpp
     assert "SILENCIO TOP: %s" in cpp
     assert '"SILENCIO Q[' not in cpp
     priority = (component / "mvs3_priority.h").read_text()
-    assert "refresh_by_silence_" in priority
-    assert "silence_position_" in priority
     assert "return refresh_legacy_(learning, weights_changed);" in priority
+    assert "return learning.candidate(i);" in priority
+    assert "noise_" not in priority
     noise = (component / "csi_noise_learning.h").read_text()
     assert "std::min(1.0, intensity / n)" in noise
     assert "std::min(1.0, intensity / peaks)" not in noise

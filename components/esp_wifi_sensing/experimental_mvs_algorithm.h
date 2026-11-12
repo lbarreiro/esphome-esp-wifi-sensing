@@ -16,7 +16,7 @@ namespace esp_wifi_sensing {
 
 class ExperimentalMvsAlgorithm {
  public:
-  ExperimentalMvsAlgorithm() { priority_.set_noise_learning(&noise_); }
+  ExperimentalMvsAlgorithm() = default;
   void observe_silence(uint32_t now, bool both_detectors_quiet) {
     if (noise_observation_valid_) {
       noise_.observe(raw_energy_, learning_, now, both_detectors_quiet, threshold_);

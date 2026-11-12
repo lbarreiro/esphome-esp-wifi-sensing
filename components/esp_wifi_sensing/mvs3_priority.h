@@ -6,7 +6,6 @@
 #include <cstdint>
 
 #include "csi_learning.h"
-#include "csi_noise_learning.h"
 
 namespace esphome {
 namespace esp_wifi_sensing {
@@ -30,7 +29,6 @@ class Mvs3Priority {
   bool active() const { return active_; }
   size_t top_bin(size_t index) const { return index < active_count_ ? top_[index] : 0; }
   size_t active_count() const { return active_count_; }
-  void set_noise_learning(const CsiNoiseLearning *noise) { noise_ = noise; }
   float score() const { return score_; }
   uint32_t confirmations() const { return confirmations_; }
 
@@ -55,10 +53,8 @@ class Mvs3Priority {
   // This prevents small ranking oscillations from churning the Top 2.
   // Returns true only when membership or activation actually changes.
   bool refresh(const CsiLearning &learning, bool weights_changed = false) {
-    // Until the one-hour silence baseline is verified, preserve the original
-    // movement-based selection, hysteresis, and 4/8 retention behavior.
-    if (noise_ != nullptr && noise_->ready())
-      return refresh_by_silence_(learning, weights_changed);
+    // Silence is diagnostic only. TOP membership and replacement use the
+    // existing movement candidate ranking and 5/8 eligibility rule.
     return refresh_legacy_(learning, weights_changed);
   }
 
@@ -77,8 +73,7 @@ class Mvs3Priority {
     size_t best[kTop]{};
     size_t found = 0;
     if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
-      // Select every normal 5/8-qualified carrier first, using the existing
-      // movement/silence ranking unchanged.
+      // Select normal 5/8-qualified carriers by movement candidate only.
       for (size_t i = 0; i < kBins; ++i) {
         if (!qualified_(learning, i)) continue;
         size_t pos = 0;
@@ -90,9 +85,7 @@ class Mvs3Priority {
         best[pos] = i;
       }
 
-      // If fewer than two carriers qualify at 5/8, fill the remaining pair
-      // positions only with incumbents still at 4/8. Their existing silence
-      // quality helps choose which incumbent fills a missing position.
+      // If fewer than two carriers qualify at 5/8, retain incumbents at 4/8.
       if (active_ && found < kTop) {
         size_t fallback[kMaxTop]{};
         size_t fallback_count = 0;
@@ -150,8 +143,7 @@ class Mvs3Priority {
       // and verified in successive independent episodes.
       if (!new_episode ||
           rank_(learning,best[1]) < std::min(rank_(learning,top_[0]),
-                                             rank_(learning,top_[1])) +
-              ((noise_ && noise_->ready()) ? 0.025f : 0.05f)) {
+                                             rank_(learning,top_[1])) + 0.05f) {
         pending_count_ = 0;
         const bool third_changed = refresh_third_(learning);
         if (weights_changed || third_changed) recalibrate_(learning);
@@ -263,109 +255,18 @@ class Mvs3Priority {
   }
 
  private:
-  // Zero-based ordinal among all 48 carriers: 0 is the highest silence score.
-  // Exact ties share an ordinal and are resolved by movement only for a stable
-  // display order; a tie can never displace an incumbent.
-  size_t silence_position_(size_t bin) const {
-    const float quality = noise_->quality(bin);
-    size_t position = 0;
-    for (size_t i = 0; i < kBins; ++i)
-      if (noise_->quality(i) > quality) ++position;
-    return position;
-  }
-
-  bool was_top_member_(size_t bin, const size_t *previous_top, size_t previous_count) const {
-    for (size_t j = 0; j < previous_count; ++j)
-      if (previous_top[j] == bin) return true;
-    return false;
-  }
-
-  bool selection_better_(const CsiLearning &learning, size_t a, size_t b,
-                         const size_t *previous_top, size_t previous_count) const {
-    const size_t a_position = silence_position_(a);
-    const size_t b_position = silence_position_(b);
-    if (a_position != b_position) return a_position < b_position;
-    // A new carrier must have a strictly better silence position to evict a
-    // retainable incumbent; equal positions preserve TOP continuity.
-    const bool a_incumbent = was_top_member_(a, previous_top, previous_count);
-    const bool b_incumbent = was_top_member_(b, previous_top, previous_count);
-    if (a_incumbent != b_incumbent) return a_incumbent;
-    if (learning.candidate(a) != learning.candidate(b))
-      return learning.candidate(a) > learning.candidate(b);
-    return a < b;
-  }
-
-  bool refresh_by_silence_(const CsiLearning &learning, bool weights_changed) {
-    const uint32_t eligible = learning.eligible_episodes();
-    const bool new_episode = eligible != last_eligible_episodes_;
-    if (!new_episode && !weights_changed) return false;
-    last_eligible_episodes_ = eligible;
-
-    const size_t previous_count = active_count_;
-    size_t previous_top[kMaxTop]{};
-    for (size_t j = 0; j < previous_count; ++j) previous_top[j] = top_[j];
-
-    size_t selected[kMaxTop]{};
-    size_t selected_count = 0;
-    if (learning.episode_window_count() == CsiLearning::kEpisodeWindow) {
-      // New members enter only after 5/8. An incumbent may remain in the
-      // candidate pool at 4/8; below 4/8 it is removed even if no replacement
-      // exists. Rank this combined pool by silence position across all 48.
-      for (size_t i = 0; i < kBins; ++i) {
-        const bool incumbent = was_top_member_(i, previous_top, previous_count);
-        const bool retainable = active_ && incumbent && learning.hits(i) >= kTopRetentionHits;
-        if (!qualified_(learning, i) && !retainable) continue;
-        size_t pos = 0;
-        while (pos < selected_count &&
-               !selection_better_(learning, i, selected[pos], previous_top, previous_count)) ++pos;
-        if (pos >= kMaxTop) continue;
-        if (selected_count < kMaxTop) ++selected_count;
-        for (size_t j = selected_count - 1; j > pos; --j) selected[j] = selected[j - 1];
-        selected[pos] = i;
-      }
-    }
-
-    if (selected_count < kTop) {
-      const bool changed = active_;
-      active_ = false;
-      active_count_ = 0;
-      for (size_t j = 0; j < kMaxTop; ++j) top_[j] = 0;
-      pending_count_ = 0;
-      if (changed) recalibrate_(learning);
-      return changed;
-    }
-
-    bool membership_changed = !active_ || active_count_ != selected_count;
-    bool order_changed = !active_;
-    for (size_t j = 0; j < selected_count; ++j) {
-      if (j >= active_count_ || top_[j] != selected[j]) order_changed = true;
-      bool present = false;
-      for (size_t k = 0; k < active_count_; ++k) present = present || top_[k] == selected[j];
-      if (!present) membership_changed = true;
-    }
-    active_ = true;
-    active_count_ = selected_count;
-    for (size_t j = 0; j < kMaxTop; ++j) top_[j] = j < selected_count ? selected[j] : 0;
-    pending_count_ = 0;
-    if (membership_changed || weights_changed) recalibrate_(learning);
-    return membership_changed || order_changed;
-  }
-
   bool qualified_(const CsiLearning &learning, size_t i) const {
     return learning.hits(i) >= CsiLearning::kMinHits &&
            learning.candidate(i) > 1.0001f;
   }
 
-  // 50% movement score (existing candidate mapped to 0..1) and
-  // 50% silence quality. 5/8 movement remains a mandatory gate.
+  // Movement-only rank; silence remains available for diagnostics elsewhere.
   float rank_(const CsiLearning &learning, size_t i) const {
-    const float movement = std::max(0.0f, std::min(1.0f, learning.candidate(i) - 1.0f));
-    if (noise_ == nullptr || !noise_->ready()) return learning.candidate(i);
-    return 0.5f * movement + 0.5f * noise_->quality(i);
+    return learning.candidate(i);
   }
 
   // Prefer any new 5/8-qualified third bin. If none exists, retain a previous
-  // TOP member at 4/8; silence quality orders these fallback members.
+  // TOP member at 4/8; movement candidate orders fallback members.
   bool refresh_third_(const CsiLearning &learning, const size_t *previous_top = nullptr,
                       size_t previous_count = 0) {
     if (!active_) return false;
@@ -415,7 +316,6 @@ class Mvs3Priority {
 
   size_t top_[kMaxTop]{};
   size_t active_count_{0};
-  const CsiNoiseLearning *noise_{nullptr};
   size_t pending_[kTop]{};
   uint8_t pending_count_{0};
   uint32_t last_eligible_episodes_{0};

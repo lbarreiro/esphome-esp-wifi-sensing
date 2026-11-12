@@ -202,10 +202,9 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
   }
 
   if (top_classificacao_text_sensor_ != nullptr && (periodic || selection_changed)) {
-    // Each entry is "bin:movement(0..5)/silence_grade(0..5)".
-    // Movement is the very same normalized candidate used by the 50/50
-    // selection rule; it is NOT the 5/8 qualification vote count.
-    // Hide silence ranking until a verified hour exists.
+    // Each entry is "bin:movement(0..5)/silence_position(1..48)".
+    // Movement is the normalized candidate, not the 5/8 vote count.
+    // Silence position is diagnostic only and never affects TOP selection.
     std::string ranking;
     const bool silence_ready = silence_validated_.load(std::memory_order_acquire);
     for (size_t i = 0; i < count && i < 3; ++i) {
@@ -215,9 +214,14 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
       char item[24]{};
       if (silence_ready) {
         const float quality = priority_top_silence_[i].load(std::memory_order_relaxed);
-        const unsigned silence_5 = CsiNoiseLearning::display_grade(quality);
+        unsigned silence_position = 1;
+        for (unsigned other = 0; other < 48; ++other) {
+          const float other_quality = silence_quality_[other].load(std::memory_order_relaxed);
+          if (other_quality > quality ||
+              (other_quality == quality && other < bins[i])) ++silence_position;
+        }
         std::snprintf(item, sizeof(item), "%u:%u/%u", static_cast<unsigned>(bins[i]),
-                      movement_5, silence_5);
+                      movement_5, silence_position);
       } else {
         std::snprintf(item, sizeof(item), "%u:%u/SEM", static_cast<unsigned>(bins[i]), movement_5);
       }
@@ -394,22 +398,39 @@ void ESPWiFiSensing::loop() {
           for (uint32_t j = 0; j < selected_count; ++j) {
             const uint32_t bin = j < 2 ? priority_bins_[j].load() : priority_third_bin_.load();
             const float quality = silence_quality_[bin].load(std::memory_order_relaxed);
-            uint32_t position = 0;
+            uint32_t position = 1;
             for (uint32_t i = 0; i < 48; ++i)
-              if (silence_quality_[i].load(std::memory_order_relaxed) > quality) ++position;
+              if (silence_quality_[i].load(std::memory_order_relaxed) > quality ||
+                  (silence_quality_[i].load(std::memory_order_relaxed) == quality && i < bin))
+                ++position;
             const int written = std::snprintf(top_positions + used, sizeof(top_positions) - used,
                                               "%s#%u=%u/48", j == 0 ? "" : " ",
                                               static_cast<unsigned>(bin),
-                                              static_cast<unsigned>(position + 1));
+                                              static_cast<unsigned>(position));
             if (written < 0 || static_cast<size_t>(written) >= sizeof(top_positions) - used) break;
             used += static_cast<size_t>(written);
           }
           ESP_LOGI(TAG, "SILENCIO TOP: %s", selected_count == 0 ? "TOP INATIVO" : top_positions);
+          char eligible_positions[256]{};
+          size_t eligible_used = 0;
+          for (uint32_t bin = 0; bin < 48; ++bin) {
+            const uint32_t position = silence_eligible_position_[bin].load(std::memory_order_relaxed);
+            if (position == 0) continue;
+            const int written = std::snprintf(eligible_positions + eligible_used,
+                sizeof(eligible_positions) - eligible_used, "%s#%u=%u/48",
+                eligible_used == 0 ? "" : " ", static_cast<unsigned>(bin),
+                static_cast<unsigned>(position));
+            if (written < 0 || static_cast<size_t>(written) >= sizeof(eligible_positions) - eligible_used) break;
+            eligible_used += static_cast<size_t>(written);
+          }
+          ESP_LOGI(TAG, "SILENCIO ELEGIVEIS: %s",
+                   eligible_used == 0 ? "SEM CANDIDATAS 5/8" : eligible_positions);
         } else {
           ESP_LOGI(TAG, "SILENCIO: PROVISORIO %u/60min | TOP3_SILENCIOSAS=PENDENTE | INTERRUPCOES=%u",
             static_cast<unsigned>(silence_pending_minutes_.load()),
             static_cast<unsigned>(silence_interruptions_.load()));
           ESP_LOGI(TAG, "SILENCIO TOP: SEM CLASSIFICACAO (TOP continua com selecao atual)");
+          ESP_LOGI(TAG, "SILENCIO ELEGIVEIS: CLASSIFICACAO PENDENTE");
         }
       }
       publish_mvs3_ha_diagnostics_(now);
@@ -923,6 +944,27 @@ void ESPWiFiSensing::csi_callback_(
         self->learn_last_over10x_.store(learn.last_episode_over10x());
         self->learn_last_over256x_.store(learn.last_episode_over256x());
         self->learn_eligible_episodes_.store(learn.eligible_episodes());
+        if (noise.ready() &&
+            (accepted != self->silence_eligible_snapshot_minute_ ||
+             learn.eligible_episodes() != self->silence_eligible_snapshot_episodes_)) {
+          for (size_t i = 0; i < CsiLearning::kBins; ++i) {
+            const bool eligible = learn.hits(i) >= CsiLearning::kMinHits &&
+                                  learn.candidate(i) > 1.0001f;
+            unsigned position = 1;
+            if (eligible) {
+              const float quality = noise.quality(i);
+              for (size_t other = 0; other < CsiLearning::kBins; ++other) {
+                const float other_quality = noise.quality(other);
+                if (other_quality > quality ||
+                    (other_quality == quality && other < i)) ++position;
+              }
+            }
+            self->silence_eligible_position_[i].store(
+                eligible ? static_cast<uint8_t>(position) : 0, std::memory_order_relaxed);
+          }
+          self->silence_eligible_snapshot_minute_ = accepted;
+          self->silence_eligible_snapshot_episodes_ = learn.eligible_episodes();
+        }
         self->learn_skipped_episodes_.store(learn.skipped_episodes());
         self->learn_prequiet_bins_.store(learn.last_prequiet_bins());
         self->learn_transition_bins_.store(learn.last_transition_bins());

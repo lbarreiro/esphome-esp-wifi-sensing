@@ -165,18 +165,6 @@ int main() {
   assert(std::fabs(varied.weights()[8]-(1.0f+0.90f*(varied.candidate(8)-1.0f)))<0.0001f);
   assert(varied.weights()[8]>1.8f);
 
-  // Public HA grading is only a presentation transform. Real 0..1
-  // noise quality stays continuous for TOP 50/50 selection.
-  assert(CsiNoiseLearning::display_grade(0.85f)==0);
-  assert(CsiNoiseLearning::display_grade(0.91f)==1);
-  assert(CsiNoiseLearning::display_grade(0.93f)==2);
-  assert(CsiNoiseLearning::display_grade(0.960f)==3);
-  assert(CsiNoiseLearning::display_grade(0.965f)==3);
-  assert(CsiNoiseLearning::display_grade(0.970f)==4);
-  assert(CsiNoiseLearning::display_grade(0.99f)==5);
-  assert(CsiNoiseLearning::display_grade(1.0f)==5);
-  assert(CsiNoiseLearning::display_grade(std::numeric_limits<float>::quiet_NaN())==0);
-
   // RAM-only noise learner: no score before 60 continuous quiet minutes,
   // then score only the rolling ten-minute window. Movement invalidates the
   // provisional hour without erasing the last verified score.
@@ -250,33 +238,30 @@ int main() {
   }
   assert(silence.ready() && silence.accepted_minutes()==131);
   assert(std::fabs(silence.quality(4)-clean_reference.quality(4))<0.000001f);
-  Mvs3Priority ranked_with_noise;
-  ranked_with_noise.set_noise_learning(&silence);
-  assert(ranked_with_noise.refresh(varied));
-  size_t expected_silent[3]{};
+  Mvs3Priority movement_ranked;
+  assert(movement_ranked.refresh(varied));
+  size_t expected_movement[3]{};
   size_t expected_count=0;
   for (size_t i=0;i<48;++i) {
     if (varied.hits(i)<5 || varied.candidate(i)<=1.0001f) continue;
     size_t pos=0;
     while (pos<expected_count &&
-           (silence.quality(expected_silent[pos])>silence.quality(i) ||
-            (silence.quality(expected_silent[pos])==silence.quality(i) &&
-             varied.candidate(expected_silent[pos])>=varied.candidate(i)))) ++pos;
+           (varied.candidate(expected_movement[pos])>varied.candidate(i) ||
+            (varied.candidate(expected_movement[pos])==varied.candidate(i) &&
+             expected_movement[pos]<i))) ++pos;
     if (pos>=3) continue;
     if (expected_count<3) ++expected_count;
-    for (size_t j=expected_count-1;j>pos;--j) expected_silent[j]=expected_silent[j-1];
-    expected_silent[pos]=i;
+    for (size_t j=expected_count-1;j>pos;--j) expected_movement[j]=expected_movement[j-1];
+    expected_movement[pos]=i;
   }
-  assert(ranked_with_noise.active_count()==expected_count);
-  for(size_t j=0;j<ranked_with_noise.active_count();++j) {
-    const size_t selected_bin=ranked_with_noise.top_bin(j);
+  assert(movement_ranked.active_count()==expected_count);
+  for(size_t j=0;j<movement_ranked.active_count();++j) {
+    const size_t selected_bin=movement_ranked.top_bin(j);
     assert(varied.hits(selected_bin)>=5);  // mandatory movement eligibility
-    assert(selected_bin==expected_silent[j]); // rank by silence among all 48
-    if (j>0) assert(silence.quality(ranked_with_noise.top_bin(j-1)) >=
-                    silence.quality(selected_bin));
+    assert(selected_bin==expected_movement[j]); // silence cannot reorder eligible carriers
   }
 
-  // Priority is never enabled with an incomplete or unqualified episode window.
+  // Priority depends on movement evidence, not on silence readiness.
   Mvs3Priority priority;
   assert(!priority.refresh(CsiLearning{}));
   assert(!priority.active());
@@ -286,9 +271,7 @@ int main() {
   assert(priority.refresh(varied));
   assert(priority.active());
   assert(priority.active_count()==3); // third qualifying bin joins 70/30
-  CsiNoiseLearning unready_silence;
   Mvs3Priority before_silence;
-  before_silence.set_noise_learning(&unready_silence);
   assert(before_silence.refresh(varied));
   assert(before_silence.active_count()==priority.active_count());
   for (size_t j=0;j<priority.active_count();++j)

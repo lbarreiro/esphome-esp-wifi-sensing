@@ -221,7 +221,10 @@ class ESPWiFiSensing : public Component {
   std::atomic<uint32_t> silence_best_bins_[3]{};
   std::atomic<float> silence_best_quality_[3]{};
   std::atomic<float> silence_quality_[48]{};
+  // Rank of each currently 5/8-qualified carrier; zero means not eligible.
+  std::atomic<uint8_t> silence_eligible_position_[48]{};
   uint32_t silence_last_snapshot_minute_{0};
+  uint32_t silence_eligible_snapshot_minute_{0}, silence_eligible_snapshot_episodes_{0};
   uint32_t learn_last_log_ms_{0};
   EspIdfCsiDriver driver_{};
   CsiPipeline pipeline_{};
