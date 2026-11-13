@@ -267,8 +267,9 @@ The third selected carrier is available in the new `portadoras_top` entity.
   the carrier's rank among all 48 bins (1 is the quietest); it never affects
   TOP membership. Until the first validated silence hour, the position says
   `SEM`, e.g. `17:1/SEM-7:1/SEM`; blank with no selected TOP.
-  Published on a TOP membership change and at most every 60 seconds
-  when any displayed value changes; does not add CSI calculations.
+  Silence positions are sampled from the latest validated window when the
+  TOP composition changes, then held until the next composition change.
+  Movement ratings can still refresh every 60 seconds when they change.
 - `portadora_mais_fraca` (numeric): the weakest current **candidate** index
   among all 48, identical to `MIN/MAX: PIOR=#...` in the existing log.
   Unknown until first CSI observation after boot.

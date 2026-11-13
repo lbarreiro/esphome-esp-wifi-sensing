@@ -184,6 +184,22 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
       !route_changed && !weakest_changed) return;
 
   if (selection_changed) {
+    // Freeze silence ranks for this TOP composition, using the latest
+    // validated rolling-window snapshot. They must not drift every minute.
+    const bool silence_ready = silence_validated_.load(std::memory_order_acquire);
+    for (size_t i = 0; i < 3; ++i) {
+      unsigned position = 0;
+      if (silence_ready && i < count) {
+        const float quality = priority_top_silence_[i].load(std::memory_order_relaxed);
+        position = 1;
+        for (unsigned other = 0; other < 48; ++other) {
+          const float other_quality = silence_quality_[other].load(std::memory_order_relaxed);
+          if (other_quality > quality ||
+              (other_quality == quality && other < bins[i])) ++position;
+        }
+      }
+      mvs3_ha_silence_positions_[i] = static_cast<uint8_t>(position);
+    }
     if (top3_binary_sensor_ != nullptr)
       top3_binary_sensor_->publish_state(count >= 2);
     if (portadoras_top_text_sensor_ != nullptr) {
@@ -206,20 +222,13 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
     // Movement is the normalized candidate, not the 5/8 vote count.
     // Silence position is diagnostic only and never affects TOP selection.
     std::string ranking;
-    const bool silence_ready = silence_validated_.load(std::memory_order_acquire);
     for (size_t i = 0; i < count && i < 3; ++i) {
       const float candidate = priority_top_movement_[i].load(std::memory_order_relaxed);
       const float movement = std::max(0.0f, std::min(1.0f, candidate - 1.0f));
       const unsigned movement_5 = static_cast<unsigned>(std::lround(movement * 5.0f));
       char item[24]{};
-      if (silence_ready) {
-        const float quality = priority_top_silence_[i].load(std::memory_order_relaxed);
-        unsigned silence_position = 1;
-        for (unsigned other = 0; other < 48; ++other) {
-          const float other_quality = silence_quality_[other].load(std::memory_order_relaxed);
-          if (other_quality > quality ||
-              (other_quality == quality && other < bins[i])) ++silence_position;
-        }
+      const unsigned silence_position = mvs3_ha_silence_positions_[i];
+      if (silence_position != 0) {
         std::snprintf(item, sizeof(item), "%u:%u/%u", static_cast<unsigned>(bins[i]),
                       movement_5, silence_position);
       } else {

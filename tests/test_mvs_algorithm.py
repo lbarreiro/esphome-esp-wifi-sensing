@@ -96,6 +96,8 @@ def test_native_ha_diagnostics_preserve_motion_sensor():
     assert '%u:%u/%u' in cpp
     assert '%u:%u/%.3f' not in cpp
     assert "silence_position" in cpp
+    assert "mvs3_ha_silence_positions_[i] =" in cpp
+    assert "Freeze silence ranks for this TOP composition" in cpp
     assert "silence_eligible_position_" in cpp
     assert "SILENCIO ELEGIVEIS: %s" in cpp
     assert "SILENCIO TOP: %s" in cpp

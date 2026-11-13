@@ -160,6 +160,7 @@ class ESPWiFiSensing : public Component {
   text_sensor::TextSensor *portadoras_top_text_sensor_{nullptr};
   text_sensor::TextSensor *top_classificacao_text_sensor_{nullptr};
   std::string mvs3_ha_last_top_classificacao_{};
+  uint8_t mvs3_ha_silence_positions_[3]{};
   bool mvs3_ha_initialized_{false};
   uint32_t mvs3_ha_last_periodic_ms_{0};
   uint32_t mvs3_ha_last_confirmation_ms_{0};
