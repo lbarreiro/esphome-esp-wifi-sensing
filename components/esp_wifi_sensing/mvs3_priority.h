@@ -99,7 +99,6 @@ class Mvs3Priority {
       active_ = false;
       active_count_ = 0;
       for (size_t j = 0; j < kMaxTop; ++j) top_[j] = 0;
-      recalibrate_(learning);
       return true;
     }
 
@@ -112,7 +111,6 @@ class Mvs3Priority {
       top_[1] = best[1];
       pending_count_ = 0;
       const bool third_changed = refresh_third_(learning);
-      if (weights_changed || third_changed) recalibrate_(learning);
       return third_changed;
     }
 
@@ -129,7 +127,6 @@ class Mvs3Priority {
                                              rank_(learning,top_[1])) + 0.05f) {
         pending_count_ = 0;
         const bool third_changed = refresh_third_(learning);
-        if (weights_changed || third_changed) recalibrate_(learning);
         return third_changed;
       }
       if (pending_count_ != 0 && pending_[0] == best[0] && pending_[1] == best[1]) {
@@ -141,7 +138,6 @@ class Mvs3Priority {
       }
       if (pending_count_ < 2) {
         const bool third_changed = refresh_third_(learning);
-        if (weights_changed || third_changed) recalibrate_(learning);
         return third_changed;
       }
     }
@@ -153,7 +149,6 @@ class Mvs3Priority {
     active_count_ = kTop;
     refresh_third_(learning, previous_top, previous_count);
     pending_count_ = 0;
-    recalibrate_(learning);
     return true;
   }
 
@@ -230,21 +225,6 @@ class Mvs3Priority {
     active_count_ = next_count;
     top_[2] = next_count == kMaxTop ? best_third : 0;
     return changed;
-  }
-
-  void recalibrate_(const CsiLearning &learning) {
-    float top_quiet = 0.0f, top_weight = 0.0f;
-    if (active_) {
-      for (size_t j = 0; j < kTop; ++j) {
-        const size_t i = top_[j];
-        top_quiet += learning.quiet_energy(i) * learning.weights()[i];
-        top_weight += learning.weights()[i];
-      }
-      top_quiet /= top_weight;
-    }
-    quiet_jitter_ = std::sqrt(top_quiet + kEpsilon);
-    score_ = 0.0f;
-    clear_filter();
   }
 
   size_t top_[kMaxTop]{};
