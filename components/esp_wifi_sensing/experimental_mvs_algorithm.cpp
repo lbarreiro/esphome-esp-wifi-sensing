@@ -21,7 +21,6 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
       timing_started_ = false;
       for (float &v : accumulator_) v = 0;
       clear_filter_();
-      priority_.reset_after_gap();
     }
     packet_seen_ = true;
     last_packet_ms_ = now_ms;
@@ -75,36 +74,29 @@ MvsResult ExperimentalMvsAlgorithm::process(const ParsedCsiPacket &packet, uint3
       static_cast<uint32_t>(now_ms - this->last_motion_time_) >= this->hold_time_ms_) {
     this->motion_state_ = false;
     this->clear_filter_();
-    this->priority_.clear_filter();
   }
 
   const bool above = this->last_score_ >= this->threshold_;
   const bool global_confirmed = this->update_filter_(above);
-  const bool priority_confirmed = this->priority_.observe(
-      selected_energy_, threshold_, motion_state_, joint_response_, above,
-      quiet_alpha_, quiet_update_limit_);
-  const bool confirmed = global_confirmed || priority_confirmed;
+  const bool confirmed = global_confirmed;
 
   // Equivalent in spirit to Espressif filter_window/filter_count: isolated CSI
   // outliers cannot trigger motion; several jitter excursions inside a short
   // window are required. Once confirmed, consume that window so a static RF
   // offset cannot repeatedly retrigger the 120 s hold.
   if (confirmed) {
-    // Track what really refreshed the 120-second hold. The global path
-    // may be using either its 48-bin fallback or the joint-gated 70/30 metric.
-    // Last route is diagnostic-only; it does not affect motion decisions.
-    last_confirmation_route_ = (global_confirmed && priority_confirmed) ? 4 :
-        priority_confirmed ? 3 : (using_priority_metric_ ? 2 : 1);
+    // The single MVS3 filter confirms the active 70/30 metric or, while fewer
+    // than two carriers qualify, its existing global 48-bin fallback.
+    last_confirmation_route_ = using_priority_metric_ ? 2 : 1;
     this->motion_state_ = true;
     this->last_motion_time_ = now_ms;
     this->clear_filter_();
-    this->priority_.clear_filter();
   }
 
   // Learn only genuinely quiet temporal jitter. A permanent change to the room
   // produces a transient and then becomes quiet automatically; no room baseline
   // reset is required and there is no stale absolute score to retrigger later.
-  if (!above && (!priority_.active() || priority_.score() < threshold_)) {
+  if (!above) {
     const float normal_score = 2.0f * normal_jitter_ /
         std::max(normal_quiet_jitter_, QUIET_FLOOR);
     if (normal_score < quiet_update_limit_) {
@@ -191,8 +183,7 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     for (size_t i = 0; i < kBins; i++) this->previous_profile_[i] = profile[i];
     this->have_previous_profile_ = true;
     normal_jitter_ = priority_jitter_ = 0.0f;
-    selected_energy_ = 0.0f;
-    joint_response_ = using_priority_metric_ = false;
+    using_priority_metric_ = false;
     return 0.0f;
   }
 
@@ -201,17 +192,15 @@ float ExperimentalMvsAlgorithm::temporal_jitter_(const float *observation) {
     raw_energy_[i] = delta * delta;
     this->previous_profile_[i] = profile[i];
   }
-  // Apply the 70/30 global weighting whenever a qualified Top 2 exists.
-  // The simultaneous-response gate remains exclusively on the independent
-  // Top 2 confirmation path; it does not restrict the global 70/30 metric.
-  joint_response_ = priority_.joint_response(raw_energy_, learning_, threshold_);
+  // This single decision score switches between the selected group's 70/30
+  // weighting and the global 48-bin fallback when the TOP group is inactive.
   using_priority_metric_ = priority_.active();
   ++scored_observations_;
   if (using_priority_metric_) ++priority_metric_observations_;
   const float normal_energy = priority_.combined_energy(
-      raw_energy_, learning_.weights(), nullptr, false);
+      raw_energy_, learning_.weights(), false);
   const float priority_energy = priority_.combined_energy(
-      raw_energy_, learning_.weights(), &selected_energy_, true);
+      raw_energy_, learning_.weights(), true);
   normal_jitter_ = std::sqrt(normal_energy + JITTER_EPSILON);
   priority_jitter_ = std::sqrt(priority_energy + JITTER_EPSILON);
   return using_priority_metric_ ? priority_jitter_ : normal_jitter_;

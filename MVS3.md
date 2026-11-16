@@ -96,26 +96,15 @@ With zero or one qualified bin, the global score uses the ordinary weighted
 48-bin mean. The metrics retain separate quiet references, re-seeded on
 membership changes to prevent synthetic threshold jumps.
 
-In addition, the original first two selected bins have their own score,
-independently calibrated using their own learned quiet energies, and an
-independent rolling motion confirmation filter. **This independent two-bin
-confirmation path is unchanged even when a third is selected**:
-an observation counts as a priority hit only if BOTH bins independently
-respond at that moment AND the joint score meets the configured threshold.
-Like the global filter, this requires three
-hits in eight observations for OFF-to-ON and two in eight to renew ON. The final
-MVS-3 decision is `global_confirmed OR top2_confirmed`; therefore the two
-can trigger ON even when the other 46 are unresponsive, but neither can
-trigger the priority path alone. Both paths share the same 120-second
-output hold, but no filter state. Selection changes, priority suspension, CSI
-gaps or weight revisions reset their confirmation history and seed the
-temporal profile to avoid synthetic ON. An existing ON hold is allowed to
-expire normally after suspension. Evaluate real empty-room false positives
-against the unchanged MVS1 reference.
-
-The global MVS3 score (`diag score`) and two-bin score (`priority score`)
-have their own calibrated quiet references and use the configured threshold
-without comparing raw energy of 2 bins directly to energy of 48 bins.
+There is one MVS-3 movement score and one confirmation filter. With a qualified
+TOP group, the filter evaluates the global 70/30 score; without one, it
+evaluates the weighted 48-bin fallback. Both use the existing configured
+threshold, filter window, OFF-to-ON confirmation count, ON renewal count and
+120-second hold. The two metrics keep separate quiet references because their
+energy scales differ. Selection changes and weight revisions reseed the active
+reference and temporal profile without changing MVS1 or cancelling an existing
+ON hold. Evaluate real empty-room false positives against the unchanged MVS1
+reference.
 
 The 70/30 percentages apply to the **two groups' decision energy**, not
 to the individual learning coefficients. There are still 48 learned weights
@@ -130,9 +119,9 @@ with a clear uppercase topic (`ESTADO:`, `TOP 2:`, `MIN/MAX:`,
 does **not** control the font size in the ESPHome log viewer.
 
 1. `ESTADO:`: currently published movement ON/OFF; whether a
-   **qualified Top 2 is available** (not synonymous with applying 70%);
+   **qualified TOP group is available**;
    how many seconds since the last actual confirmation; that confirmation's
-   route (`GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS`, or `SEM`);
+   route (`GLOBAL48`, `GLOBAL70`, or `SEM`);
    and `70_USADO=A/B (P%)`, the **A observations in the last minute**
    that actually applied 70/30 out of B scored observations. When no
    movement has ever been confirmed, the last confirmation says `SEM`.
@@ -147,32 +136,28 @@ does **not** control the font size in the ESPHome log viewer.
 4. `APRENDIZAGEM:`: committed weight revision `rev`,
    accepted/eligible/skipped/rejected episodes, accepted quiet blocks,
    and latest prequiet/transition/10x/256x counts.
-5. `DIAGNOSTICO:`: global and independent Top 2 scores,
-   cumulative priority confirmations, retained motion state, raw quiet
-   classification, observed energy and limit, sample counts, dropped
-   blocks, hold resets and CSI discontinuities.
+5. `DIAGNOSTICO:`: current global decision score, retained motion state,
+   raw quiet classification, observed energy and limit, sample counts,
+   dropped blocks, hold resets and CSI discontinuities.
 
 The event log for a transition to ON or OFF is also labeled `ESTADO` and
 includes the last detection route and the existing 120-second hold. A global
 confirmation is labeled `GLOBAL70` if 70/30 was applied to the confirming
-observation, or `GLOBAL48` when the 48-bin metric was used.
-`AMBOS` means the global and independent priority paths confirmed
-simultaneously. This is the **last** confirmed route, not a guarantee that
-the current observation is still above the movement threshold.
+observation, or `GLOBAL48` when the 48-bin fallback was used. This is the
+**last** confirmed route, not a guarantee that the current observation is
+still above the movement threshold.
 
 Individual Top 2 hits are from the last eight eligible episodes;
 `cand` can differ from `peso` because the latter changes only at `rev`.
 The number of qualified bins counts bins meeting the 5/8 rule, not
-eligible episodes. The cumulative `confirms` count includes hold renewals,
-not just distinct human movements. The independent CSI packet-length
-diagnostic is unchanged.
+eligible episodes. The independent CSI packet-length diagnostic is unchanged.
 
 With the unrestricted global 70/30 weighting, `70_USADO` now reports
-how many scored observations happened while a qualified 2-3-bin group existed;
-it no longer measures simultaneous reactions of the two individual bins.
+how many scored observations happened while a qualified 2-3-bin group existed.
 It will typically approach 100% during uninterrupted 2-3-bin qualification,
-**not** indicate motion accuracy or simultaneous response. Independent Top 2
-confirmations still require both bins to react in the same observation.
+**not** indicate motion accuracy. Every MVS3 movement confirmation now uses
+the same filtered global score: 70/30 with a qualified TOP group, or all 48
+bins while that group is inactive.
 
 ## Silence classification as a diagnostic
 
@@ -181,8 +166,8 @@ carrier must pass **5/8**; an existing TOP member may remain at **4/8** when
 there is no eligible replacement; below 4/8 it is removed. Movement hysteresis
 and replacement behavior remain unchanged. Silence scores and ranks are
 diagnostic only: they cannot delay a movement-qualified carrier or retain a
-carrier that has fallen below the movement continuity rule. The independent
-Top2 confirmation and global 70/30 energy weights do not change.
+carrier that has fallen below the movement continuity rule. The TOP group
+continues to receive 70% of the global decision energy.
 
 Silence quality has an equal-weight three-component penalty:
 
@@ -242,9 +227,9 @@ performance and false-positive rates requires real tests in the room.
 
 ## Five native ESPHome entities for Home Assistant
 
-These optional entities use the same local CSI processing, without MQTT and
-without changing **any existing periodic or transition log format**. They are
-published via the ordinary Home Assistant ESPHome integration. The legacy
+These optional entities use the same local CSI processing, without MQTT or
+additional CSI polling. They are published via the ordinary Home Assistant
+ESPHome integration. The legacy
 minute log still says `TOP 2` and prints the first two selected carriers.
 The third selected carrier is available in the new `portadoras_top` entity.
 
@@ -255,8 +240,7 @@ The third selected carrier is available in the new `portadoras_top` entity.
   actual MVS3 movement confirmation. Unknown until the first confirmation
   since boot; updates at least once per minute and immediately on a change.
 - `via` (text): route of the **last** movement confirmation:
-  `GLOBAL48`, `GLOBAL70`, `TOP2`, `AMBOS` or `SEM`. TOP2 continues
-  to mean the original independently gated first two carriers.
+  `GLOBAL48`, `GLOBAL70` or `SEM`.
 - `portadoras_top` (text): exact selected carrier indexes, e.g. `6,17` or
   `6,17,23`; empty when the priority group is inactive.
 - `top_classificacao` (text): selected carriers only, with

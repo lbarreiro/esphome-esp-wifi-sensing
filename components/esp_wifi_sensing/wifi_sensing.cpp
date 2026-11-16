@@ -244,8 +244,7 @@ void ESPWiFiSensing::publish_mvs3_ha_diagnostics_(uint32_t now) {
   }
 
   if (via_text_sensor_ != nullptr && route_changed) {
-    const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
-                      route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
+    const char *via = route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
     via_text_sensor_->publish_state(via);
   }
 
@@ -322,8 +321,7 @@ void ESPWiFiSensing::loop() {
       if (active_3 != mvs_3_published_state_) {
         mvs_3_published_state_ = active_3;
         const uint32_t route = mvs_3_last_confirmation_route_.load(std::memory_order_relaxed);
-        const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
-            route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
+        const char *via = route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
         ESP_LOGI(TAG, "ESTADO: MOVIMENTO=%s | ULTIMA_VIA=%s | RETENCAO=%u ms",
                  active_3 ? "ON" : "OFF", via, static_cast<unsigned>(motion_hold_time_ms_));
         motion_3_binary_sensor_->publish_state(active_3);
@@ -333,8 +331,7 @@ void ESPWiFiSensing::loop() {
         // Short uppercase topic names are easier to scan in ESPHome logs;
         // the firmware itself cannot adjust the viewer's font size.
         const uint32_t route = mvs_3_last_confirmation_route_.load(std::memory_order_relaxed);
-        const char *via = route == 4 ? "AMBOS" : route == 3 ? "TOP2" :
-            route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
+        const char *via = route == 2 ? "GLOBAL70" : route == 1 ? "GLOBAL48" : "SEM";
         const uint32_t scored = mvs_3_scored_observations_.load(std::memory_order_relaxed);
         const uint32_t applied = mvs_3_priority_metric_observations_.load(std::memory_order_relaxed);
         const uint32_t total_minute = scored - mvs_3_prev_scored_log_;
@@ -383,9 +380,8 @@ void ESPWiFiSensing::loop() {
           static_cast<unsigned>(learn_prequiet_bins_.load()), static_cast<unsigned>(learn_transition_bins_.load()),
           static_cast<unsigned>(learn_last_over10x_.load()), static_cast<unsigned>(learn_last_over256x_.load()));
 
-        ESP_LOGI(TAG, "DIAGNOSTICO: global=%.3f top=%.3f confirms=%u held=%u | rawquiet=%u energia=%.6f limite=%.6f obs=%u good=%u/%u discard=%u resets=%u gaps=%u",
-          learn_score_.load(), priority_score_.load(),
-          static_cast<unsigned>(priority_confirmations_.load()), static_cast<unsigned>(learn_held_.load()),
+        ESP_LOGI(TAG, "DIAGNOSTICO: global=%.3f held=%u | rawquiet=%u energia=%.6f limite=%.6f obs=%u good=%u/%u discard=%u resets=%u gaps=%u",
+          learn_score_.load(), static_cast<unsigned>(learn_held_.load()),
           static_cast<unsigned>(learn_raw_quiet_.load()), learn_energy_.load(), learn_limit_.load(),
           static_cast<unsigned>(learn_observations_.load()),
           static_cast<unsigned>(learn_good_.load()), static_cast<unsigned>(learn_count_.load()),
@@ -917,8 +913,6 @@ void ESPWiFiSensing::csi_callback_(
         self->learn_held_.store(self->mvs_3_algorithm_.motion_state());
         self->learn_score_.store(third.score);
         self->priority_active_.store(self->mvs_3_algorithm_.priority_active());
-        self->priority_score_.store(self->mvs_3_algorithm_.priority_score());
-        self->priority_confirmations_.store(self->mvs_3_algorithm_.priority_confirmations());
         self->mvs_3_scored_observations_.store(self->mvs_3_algorithm_.scored_observations(),
                                              std::memory_order_relaxed);
         self->mvs_3_priority_metric_observations_.store(

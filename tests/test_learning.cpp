@@ -286,18 +286,14 @@ int main() {
   // A full two-or-three-member group contributes 70% of total energy,
   // regardless of how quiet the remaining 46 or 45 bins are.
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 1.0f : 0.0f;
-  float top_energy=0.0f;
-  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f)<0.0001f);
-  assert(std::fabs(top_energy-1.0f)<0.0001f);
-  // Only the third bin responds: global 70/30 sees it, while the original
-  // independent Top2 energy must remain zero (not diluted by third-bin energy).
+  assert(std::fabs(priority.combined_energy(energy,unit_weights)-0.70f)<0.0001f);
+  // A response on any selected bin, including the optional third, contributes
+  // to the same single 70/30 decision metric.
   for (size_t i=0;i<48;++i) energy[i]=0.0f;
   energy[priority.top_bin(2)]=1.0f;
-  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.70f/3.0f)<0.0001f);
-  assert(std::fabs(top_energy)<0.0001f);
+  assert(std::fabs(priority.combined_energy(energy,unit_weights)-0.70f/3.0f)<0.0001f);
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
-  assert(std::fabs(priority.combined_energy(energy,unit_weights,&top_energy)-0.30f)<0.0001f);
-  assert(std::fabs(top_energy)<0.0001f);
+  assert(std::fabs(priority.combined_energy(energy,unit_weights)-0.30f)<0.0001f);
   for (size_t i=0;i<48;++i) energy[i]=1.0f;
   assert(std::fabs(priority.combined_energy(energy,unit_weights)-1.0f)<0.0001f);
 
@@ -310,45 +306,17 @@ int main() {
   for (size_t i=0;i<48;++i) energy[i]=selected[i] ? 0.0f : 1.0f;
   assert(std::fabs(priority.combined_energy(energy,unequal_weights)-0.30f)<0.0001f);
 
-  // The global 70/30 formula is deliberately unrestricted once Top 2
-  // qualifies. One responsive bin may dominate that global metric.
-  // The separate independent Top2 confirmation STILL requires both bins
-  // to respond within the SAME observation.
+  // The one decision metric is the unrestricted 70/30 score; a single
+  // selected carrier contributes without a separate simultaneous Top2 gate.
   float individual[48]{};
   for (size_t i=0;i<48;++i) individual[i]=0.000001f;
   const auto first_bin=priority.top_bin(0);
-  const auto second_bin=priority.top_bin(1);
   individual[first_bin]=0.06f;
-  assert(!priority.joint_response(individual,varied,8.1f));
-  const float unrestricted_70 = priority.combined_energy(individual,unit_weights,nullptr,true);
-  const float ordinary_48 = priority.combined_energy(individual,unit_weights,nullptr,false);
+  const float unrestricted_70 = priority.combined_energy(individual,unit_weights,true);
+  const float ordinary_48 = priority.combined_energy(individual,unit_weights,false);
   assert(unrestricted_70 > ordinary_48 * 5.0f);
-  assert(std::fabs(priority.combined_energy(individual,unit_weights,nullptr,false)
+  assert(std::fabs(priority.combined_energy(individual,unit_weights,false)
                    -(0.06f+47.0f*0.000001f)/48.0f)<0.00001f);
-  individual[second_bin]=0.06f;
-  assert(priority.joint_response(individual,varied,8.1f));
-  assert(priority.combined_energy(individual,unit_weights,nullptr,true)>
-         priority.combined_energy(individual,unit_weights,nullptr,false));
-
-  // The two bins have their OWN 3-of-8 confirmation; a single spike is
-  // not enough, and their ON confirmation does not need the 46 others.
-  // Even repeated strong energy cannot pass if only one bin responded.
-  priority.clear_filter();
-  for (unsigned i=0;i<12;++i)
-    assert(!priority.observe(0.06f,8.1f,false,false,false,0.01f,3.0f));
-  assert(priority.confirmations()==0);
-  priority.clear_filter();
-  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
-  priority.clear_filter(); // a lone spike cannot cross into the next episode
-  assert(!priority.observe(0.0f,8.1f,false,true,false,0.01f,3.0f));
-  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
-  assert(!priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
-  assert(priority.observe(0.03f,8.1f,false,true,false,0.01f,3.0f));
-  assert(priority.confirmations()==1);
-  // After ON, the existing two-peak renewal rule is preserved.
-  assert(!priority.observe(0.03f,8.1f,true,true,false,0.01f,3.0f));
-  assert(priority.observe(0.03f,8.1f,true,true,false,0.01f,3.0f));
-  assert(priority.confirmations()==2);
   // Rolling out former hits causes a previously useful bin to return
   // toward neutral, rather than being permanently rewarded or discarded.
   for (unsigned ep=8;ep<16;++ep) varied_episode(varied,varied_now,ep);
@@ -570,7 +538,7 @@ int main() {
   // observations where 70/30 was actually applied.
   assert(third.scored_observations()>0);
   assert(third.priority_metric_observations()==0);
-  assert(third.last_confirmation_route()==1); // no Top2: global 48-bin path
+  assert(third.last_confirmation_route()==1); // no qualified group: global 48-bin fallback
 
   // Isolation regression: run the reference MVS-256 both alone and beside
   // a training MVS-3. Its score, ON/OFF and timing must remain IDENTICAL,
@@ -588,6 +556,7 @@ int main() {
     const bool qualified_before=adaptive.priority_active();
     const uint32_t metric_count_before=adaptive.priority_metric_observations();
     const auto e=adaptive.process(packet,t*100);
+    assert(adaptive.last_confirmation_route()<=2); // only 48-bin or global 70/30 route
     // On a quiet observation, 70/30 must still be used if Top2 is valid.
     // This fails under the old simultaneous-response restriction.
     if (qualified_before && !moving && adaptive.priority_active() &&
@@ -622,5 +591,5 @@ int main() {
   assert(revised && adaptive.learning().episodes()==8);
   assert(adaptive.learning().revisions()==1);
   assert(used_unrestricted_70_while_quiet);
-  std::puts("C++ MVS3 unrestricted 2-3-bin global 70/30, independent two-bin gate, weight revisions and MVS1 isolation: PASS");
+  std::puts("C++ MVS3 single global 70/30 decision, weight revisions and MVS1 isolation: PASS");
 }

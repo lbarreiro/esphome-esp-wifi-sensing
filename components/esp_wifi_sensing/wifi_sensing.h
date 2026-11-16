@@ -176,7 +176,7 @@ class ESPWiFiSensing : public Component {
   ExperimentalMvsAlgorithm mvs_3_algorithm_{};
   std::atomic<uint32_t> mvs_3_last_confirmation_ms_{0};
   std::atomic<bool> mvs_3_confirmation_seen_{false};
-  // Diagnostic-only: 0=none, 1=global48, 2=global70, 3=Top2, 4=both.
+  // Diagnostic-only: 0=none, 1=global48 fallback, 2=global70/30.
   std::atomic<uint32_t> mvs_3_last_confirmation_route_{0};
   std::atomic<uint32_t> mvs_3_scored_observations_{0};
   std::atomic<uint32_t> mvs_3_priority_metric_observations_{0};
@@ -209,8 +209,6 @@ class ESPWiFiSensing : public Component {
   // updated inside CSI callback, read safely in ESPHome main loop.
   std::atomic<float> priority_top_movement_[3]{};
   std::atomic<float> priority_top_silence_[3]{};
-  std::atomic<float> priority_score_{0};
-  std::atomic<uint32_t> priority_confirmations_{0};
   std::atomic<uint32_t> priority_bins_[2]{};
   std::atomic<uint32_t> priority_hits_[2]{};
   std::atomic<float> priority_candidates_[2]{}, priority_weights_[2]{};

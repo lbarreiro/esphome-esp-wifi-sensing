@@ -32,12 +32,10 @@ class ExperimentalMvsAlgorithm {
   uint32_t last_motion_time() const { return last_motion_time_; }
   size_t observation_count() const { return total_observations_; }
   bool priority_active() const { return priority_.active(); }
-  float priority_score() const { return priority_.score(); }
-  uint32_t priority_confirmations() const { return priority_.confirmations(); }
   size_t priority_bin(size_t i) const { return priority_.top_bin(i); }
   size_t priority_count() const { return priority_.active_count(); }
   // The last confirmation route is kept even if the ON hold expires.
-  // 0=none, 1=global 48-bin, 2=global 70/30, 3=independent Top2, 4=both.
+  // 0=none, 1=global 48-bin fallback, 2=global 70/30.
   uint8_t last_confirmation_route() const { return last_confirmation_route_; }
   // Cumulative counters, to be diffed by the ESPHome loop once per minute.
   uint32_t scored_observations() const { return scored_observations_; }
@@ -45,8 +43,8 @@ class ExperimentalMvsAlgorithm {
 
   static constexpr size_t kBins = 48;
   static constexpr size_t kMaxFilterWindow = 64;
-  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); priority_.set_filter_window(count); }
-  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); priority_.set_filter_count(count); }
+  void set_filter_window(size_t count) { filter_window_ = count; clear_filter_(); }
+  void set_filter_count(uint8_t count) { filter_count_ = count; clear_filter_(); }
   void set_update_interval(uint32_t ms) { update_interval_ms_ = ms; }
   void set_quiet_boot_samples(uint32_t count) { quiet_boot_samples_ = count; }
   void set_quiet_alpha(float alpha) { quiet_alpha_ = alpha; }
@@ -60,10 +58,8 @@ class ExperimentalMvsAlgorithm {
   Mvs3Priority priority_{};
   bool noise_observation_valid_{false};
   float raw_energy_[kBins]{};
-  float selected_energy_{0};
   float normal_jitter_{0.0f};
   float priority_jitter_{0.0f};
-  bool joint_response_{false};
   bool using_priority_metric_{false};
   uint8_t last_confirmation_route_{0};
   uint32_t scored_observations_{0}, priority_metric_observations_{0};
