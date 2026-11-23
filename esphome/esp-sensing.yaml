@@ -70,7 +70,7 @@ time:
                          !id(mvs_csv_uploading);
               then:
                 - lambda: |-
-                    const auto now = id(mvs_daily_log_clock).now();
+                    auto now = id(mvs_daily_log_clock).now();
                     id(mvs_csv_snapshot) = id(mvs_csv_data);
                     id(mvs_csv_filename) =
                         "mvs-comparacao-" + now.strftime("%Y-%m-%d") + ".csv";
@@ -189,7 +189,7 @@ binary_sensor:
               else:
                 - switch.turn_off: motion_led
           - lambda: |-
-              const auto now = id(mvs_daily_log_clock).now();
+              auto now = id(mvs_daily_log_clock).now();
               if (!now.is_valid()) {
                 ESP_LOGW("mvs_log", "MVS1 mudou de estado sem hora sincronizada; evento não registado");
                 return;
@@ -219,7 +219,7 @@ binary_sensor:
       on_state:
         then:
           - lambda: |-
-              const auto now = id(mvs_daily_log_clock).now();
+              auto now = id(mvs_daily_log_clock).now();
               if (!now.is_valid()) {
                 ESP_LOGW("mvs_log", "MVS3 mudou de estado sem hora sincronizada; evento não registado");
                 return;
