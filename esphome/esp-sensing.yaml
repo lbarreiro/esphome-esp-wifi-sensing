@@ -16,6 +16,112 @@ esphome:
       - delay: 100ms
       - output.turn_on: rf_switch_select
 
+# Registo temporário em RAM das ativações MVS1/MVS3. Cada linha só é fechada
+# quando o respetivo sensor passa a OFF; os dados não são escritos na flash.
+globals:
+  - id: mvs1_episode_start_epoch
+    type: int64_t
+    restore_value: no
+    initial_value: '0'
+  - id: mvs1_episode_start_iso
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: mvs3_episode_start_epoch
+    type: int64_t
+    restore_value: no
+    initial_value: '0'
+  - id: mvs3_episode_start_iso
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: mvs_csv_data
+    type: std::string
+    restore_value: no
+    initial_value: '"inicio,fim,sensor,duracao_s\n"'
+  - id: mvs_csv_snapshot
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: mvs_csv_filename
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: mvs_csv_uploading
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# A hora local vem do Home Assistant e segue Europe/Lisbon, incluindo a hora
+# de verão. O CSV é enviado como anexo às 12:00.
+time:
+  - platform: homeassistant
+    id: mvs_daily_log_clock
+    timezone: Europe/Lisbon
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 12
+        then:
+          - if:
+              condition:
+                lambda: |-
+                  return id(mvs_daily_log_clock).now().is_valid() &&
+                         !id(mvs_csv_uploading);
+              then:
+                - lambda: |-
+                    const auto now = id(mvs_daily_log_clock).now();
+                    id(mvs_csv_snapshot) = id(mvs_csv_data);
+                    id(mvs_csv_filename) =
+                        "mvs-comparacao-" + now.strftime("%Y-%m-%d") + ".csv";
+                    id(mvs_csv_uploading) = true;
+                    ESP_LOGI("mvs_log", "A enviar anexo %s (%u bytes)",
+                             id(mvs_csv_filename).c_str(),
+                             static_cast<unsigned>(id(mvs_csv_snapshot).size()));
+                - http_request.send:
+                    method: PUT
+                    url: https://ntfy.lbarreiro.net/csi
+                    request_headers:
+                      Filename: !lambda |-
+                        return id(mvs_csv_filename).c_str();
+                      Content-Type: text/csv; charset=utf-8
+                    body: !lambda |-
+                      return id(mvs_csv_snapshot);
+                    on_response:
+                      then:
+                        - lambda: |-
+                            if (response->status_code >= 200 && response->status_code < 300) {
+                              const std::string header = "inicio,fim,sensor,duracao_s\n";
+                              auto &buffer = id(mvs_csv_data);
+                              const auto &sent = id(mvs_csv_snapshot);
+                              if (buffer.size() >= sent.size() &&
+                                  buffer.compare(0, sent.size(), sent) == 0) {
+                                buffer.erase(0, sent.size());
+                                buffer.insert(0, header);
+                              } else {
+                                ESP_LOGE("mvs_log", "CSV enviado, mas não foi possível separar o bloco enviado da RAM");
+                              }
+                              ESP_LOGI("mvs_log", "Anexo CSV aceite pelo ntfy: HTTP %d",
+                                       response->status_code);
+                              id(mvs_csv_snapshot).clear();
+                            } else {
+                              ESP_LOGE("mvs_log", "Falha no envio do CSV: HTTP %d; dados mantidos em RAM",
+                                       response->status_code);
+                            }
+                            id(mvs_csv_uploading) = false;
+                    on_error:
+                      then:
+                        - lambda: |-
+                            ESP_LOGE("mvs_log", "Falha de ligação ao ntfy; dados mantidos em RAM");
+                            id(mvs_csv_uploading) = false;
+              else:
+                - logger.log:
+                    level: WARN
+                    format: "Envio CSV às 12:00 não iniciado: hora inválida ou envio anterior em curso"
+
+http_request:
+  verify_ssl: true
+
 esp32:
   variant: ESP32C6
   framework:
@@ -82,9 +188,61 @@ binary_sensor:
                 - switch.turn_on: motion_led
               else:
                 - switch.turn_off: motion_led
+          - lambda: |-
+              const auto now = id(mvs_daily_log_clock).now();
+              if (!now.is_valid()) {
+                ESP_LOGW("mvs_log", "MVS1 mudou de estado sem hora sincronizada; evento não registado");
+                return;
+              }
+              if (id(motion_detected).state) {
+                if (id(mvs1_episode_start_epoch) == 0) {
+                  id(mvs1_episode_start_epoch) = static_cast<int64_t>(now.timestamp);
+                  id(mvs1_episode_start_iso) = now.strftime("%Y-%m-%dT%H:%M:%S%z");
+                }
+                return;
+              }
+              if (id(mvs1_episode_start_epoch) == 0) return;
+              const int64_t duration = static_cast<int64_t>(now.timestamp) -
+                                       id(mvs1_episode_start_epoch);
+              if (duration >= 0) {
+                id(mvs_csv_data) += id(mvs1_episode_start_iso) + "," +
+                    now.strftime("%Y-%m-%dT%H:%M:%S%z") + ",MVS1," +
+                    std::to_string(static_cast<long long>(duration)) + "\n";
+              } else {
+                ESP_LOGW("mvs_log", "Hora recuou durante episódio MVS1; evento descartado");
+              }
+              id(mvs1_episode_start_epoch) = 0;
+              id(mvs1_episode_start_iso).clear();
     motion_3:
       name: "CSI Motion 256 Learned"
       id: csi_movimento_3
+      on_state:
+        then:
+          - lambda: |-
+              const auto now = id(mvs_daily_log_clock).now();
+              if (!now.is_valid()) {
+                ESP_LOGW("mvs_log", "MVS3 mudou de estado sem hora sincronizada; evento não registado");
+                return;
+              }
+              if (id(csi_movimento_3).state) {
+                if (id(mvs3_episode_start_epoch) == 0) {
+                  id(mvs3_episode_start_epoch) = static_cast<int64_t>(now.timestamp);
+                  id(mvs3_episode_start_iso) = now.strftime("%Y-%m-%dT%H:%M:%S%z");
+                }
+                return;
+              }
+              if (id(mvs3_episode_start_epoch) == 0) return;
+              const int64_t duration = static_cast<int64_t>(now.timestamp) -
+                                       id(mvs3_episode_start_epoch);
+              if (duration >= 0) {
+                id(mvs_csv_data) += id(mvs3_episode_start_iso) + "," +
+                    now.strftime("%Y-%m-%dT%H:%M:%S%z") + ",MVS3," +
+                    std::to_string(static_cast<long long>(duration)) + "\n";
+              } else {
+                ESP_LOGW("mvs_log", "Hora recuou durante episódio MVS3; evento descartado");
+              }
+              id(mvs3_episode_start_epoch) = 0;
+              id(mvs3_episode_start_iso).clear();
     top3:
       name: "MVS3 TOP3"
       entity_category: diagnostic
