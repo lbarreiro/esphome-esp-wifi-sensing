@@ -138,9 +138,9 @@ external_components:
   - source:
       type: git
       url: https://github.com/lbarreiro/esphome-esp-wifi-sensing
-      ref: a28364b54046cb236e993ba016b6474b585d7a05
+      ref: feature/mvs3-raw-episode-learning
     components: [esp_wifi_sensing]
-    refresh: 1d
+    refresh: 1min
 
 esp_wifi_sensing:
   id: wifi_sensing
@@ -166,6 +166,17 @@ output:
     id: rf_switch_select
 
 switch:
+  - platform: template
+    name: "MVS Router Pings"
+    id: mvs_router_pings
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: |-
+          id(wifi_sensing).set_ping_enabled(true);
+    turn_off_action:
+      - lambda: |-
+          id(wifi_sensing).set_ping_enabled(false);
   - platform: gpio
     id: motion_led
     pin:
