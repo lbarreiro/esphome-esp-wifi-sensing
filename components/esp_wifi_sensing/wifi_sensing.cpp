@@ -289,14 +289,31 @@ void ESPWiFiSensing::loop() {
     ESP_LOGI(TAG, "CSI enabled");
   }
 
-  if (!this->ping_started_) {
+  if (!this->ping_enabled_) {
+    if (this->ping_started_ && this->ping_handle_ != nullptr) {
+      const esp_err_t stop_err = esp_ping_stop(this->ping_handle_);
+      if (stop_err != ESP_OK) {
+        ESP_LOGE(TAG, "Could not stop router ping: %s", esp_err_to_name(stop_err));
+      } else {
+        const esp_err_t delete_err = esp_ping_delete_session(this->ping_handle_);
+        if (delete_err != ESP_OK) {
+          ESP_LOGE(TAG, "Could not delete router ping session: %s", esp_err_to_name(delete_err));
+        } else {
+          this->ping_handle_ = nullptr;
+          this->ping_started_ = false;
+          ESP_LOGI(TAG, "Router ping stopped by Home Assistant");
+        }
+      }
+    }
+  } else if (!this->ping_started_) {
     if (!this->start_ping_()) {
       delay(1000);
       return;
     }
 
     this->ping_started_ = true;
-    ESP_LOGI(TAG, "Router ping started");
+    ESP_LOGI(TAG, "Router ping started (interval=%u ms)",
+             static_cast<unsigned>(this->ping_interval_ms_));
   }
 
   const uint32_t now = millis();
