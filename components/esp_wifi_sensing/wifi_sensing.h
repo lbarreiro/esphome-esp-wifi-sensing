@@ -48,6 +48,7 @@ class ESPWiFiSensing : public Component {
   void set_quiet_alpha(float alpha) { this->mvs_algorithm_.set_quiet_alpha(alpha); this->mvs_3_algorithm_.set_quiet_alpha(alpha); }
   void set_quiet_update_limit(float limit) { this->mvs_algorithm_.set_quiet_update_limit(limit); this->mvs_3_algorithm_.set_quiet_update_limit(limit); }
   void set_ping_interval(uint32_t ms) { this->ping_interval_ms_ = ms; }
+  void set_ping_enabled(bool enabled) { this->ping_enabled_ = enabled; }
   void set_motion_debounce(uint32_t debounce) { this->motion_debounce_ = debounce; }
   void set_adaptive_threshold_enabled(bool enabled) { this->adaptive_threshold_enabled_ = enabled; }
   void set_sigma_multiplier(float multiplier) { this->adaptive_baseline_.set_sigma_multiplier(multiplier); this->sigma_multiplier_ = multiplier; }
@@ -116,6 +117,7 @@ class ESPWiFiSensing : public Component {
 
   bool csi_started_{false};
   bool ping_started_{false};
+  bool ping_enabled_{true};
   bool gain_compensation_enabled_{false};
   CsiAlgorithm selected_algorithm_{CsiAlgorithm::ABSOLUTE_SUM};
 
